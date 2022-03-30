@@ -1,4 +1,3 @@
-from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 import argparse
 import os

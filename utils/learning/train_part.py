@@ -13,8 +13,7 @@ from sklearn.metrics import roc_auc_score
 from sklearn.metrics import confusion_matrix
 
 from utils.common.visualize import visualize_TSNE
-from utils.data.load_data import MVTecDataset
-from utils.data.transforms import Transform, GT_Transform, INV_Normalize
+from utils.data.transforms import INV_Normalize
 
 def min_max_norm(image):
     a_min, a_max = image.min(), image.max()
