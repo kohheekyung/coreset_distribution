@@ -20,7 +20,7 @@ def get_args():
     parser.add_argument('--save_src_code', default=True)
     parser.add_argument('--save_anomaly_map', default=True)
     parser.add_argument('--n_neighbors', type=int, default=9)
-    parser.add_argument('--model', choices=['WR50', 'R50', 'R34', 'R18', 'R101', 'R152'], default='WR50')
+    parser.add_argument('--feature_model', choices=['WR50', 'R50', 'R34', 'R18', 'R101', 'R152'], default='WR50')
     parser.add_argument('--block_index', choices=['1+2', '2+3', '3+4', '4', '5'], default='2+3') # '2+3' means using both block 2 and block 3
     parser.add_argument('--visualize_tsne', default=False, action='store_true', help='Whether to visualize t-SNE projection')
     parser.add_argument('--whitening', default=False, action='store_true', help='Whether to use whitening features')

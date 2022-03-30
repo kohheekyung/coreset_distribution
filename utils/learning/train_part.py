@@ -113,37 +113,37 @@ class STPM(pl.LightningModule):
         def hook_t(module, input, output):
             self.features.append(output)
             
-        if args.model == 'R152' :
-            self.model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet152', pretrained=True)
-        elif args.model == 'R101' :
-            self.model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet101', pretrained=True)
-        elif args.model == 'R18' :
-            self.model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=True)
-        elif args.model == 'R34' :
-            self.model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet34', pretrained=True)
-        elif args.model == 'R50' :
-            self.model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet50', pretrained=True)
-        elif args.model == 'WR50' :
-            self.model = torch.hub.load('pytorch/vision:v0.10.0', 'wide_resnet50_2', pretrained=True)
-        elif args.model == 'WR101' :
-            self.model = torch.hub.load('pytorch/vision:v0.10.0', 'wide_resnet101_2', pretrained=True)
+        if args.feature_model == 'R152' :
+            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet152', pretrained=True)
+        elif args.feature_model == 'R101' :
+            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet101', pretrained=True)
+        elif args.feature_model == 'R18' :
+            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=True)
+        elif args.feature_model == 'R34' :
+            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet34', pretrained=True)
+        elif args.feature_model == 'R50' :
+            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet50', pretrained=True)
+        elif args.feature_model == 'WR50' :
+            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'wide_resnet50_2', pretrained=True)
+        elif args.feature_model == 'WR101' :
+            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'wide_resnet101_2', pretrained=True)
 
-        for param in self.model.parameters():
+        for param in self.feature_model.parameters():
             param.requires_grad = False
 
         if args.block_index == '1+2' :
-            self.model.layer1[-1].register_forward_hook(hook_t)
-            self.model.layer2[-1].register_forward_hook(hook_t)
+            self.feature_model.layer1[-1].register_forward_hook(hook_t)
+            self.feature_model.layer2[-1].register_forward_hook(hook_t)
         elif args.block_index == '2+3' :
-            self.model.layer2[-1].register_forward_hook(hook_t)
-            self.model.layer3[-1].register_forward_hook(hook_t)
+            self.feature_model.layer2[-1].register_forward_hook(hook_t)
+            self.feature_model.layer3[-1].register_forward_hook(hook_t)
         elif args.block_index == '3+4' :
-            self.model.layer3[-1].register_forward_hook(hook_t)
-            self.model.layer4[-1].register_forward_hook(hook_t)
+            self.feature_model.layer3[-1].register_forward_hook(hook_t)
+            self.feature_model.layer4[-1].register_forward_hook(hook_t)
         elif args.block_index == '5' :
-            self.model.avgpool.register_forward_hook(hook_t)
+            self.feature_model.avgpool.register_forward_hook(hook_t)
         elif args.block_index == '4' :
-            self.model.layer4[-1].register_forward_hook(hook_t)
+            self.feature_model.layer4[-1].register_forward_hook(hook_t)
 
         self.criterion = torch.nn.MSELoss(reduction='sum')
 
@@ -167,7 +167,7 @@ class STPM(pl.LightningModule):
 
     def forward(self, x_t):
         self.init_features()
-        _ = self.model(x_t)
+        _ = self.feature_model(x_t)
         return self.features
 
     def save_anomaly_map(self, anomaly_map, input_img, gt_img, file_name, x_type):
@@ -190,7 +190,7 @@ class STPM(pl.LightningModule):
         return None
 
     def on_train_start(self):
-        self.model.eval() # to stop running_var move (maybe not critical)
+        self.feature_model.eval() # to stop running_var move (maybe not critical)
         self.embedding_dir_path, self.sample_path, self.source_code_save_path = prep_dirs(self.logger.log_dir, self.args.category)
         self.embedding_list = []
     
