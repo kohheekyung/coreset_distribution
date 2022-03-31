@@ -2,8 +2,8 @@ import pytorch_lightning as pl
 import argparse
 import os
 
-from utils.data.load_data import Train_Dataloader, Test_Dataloader
-from utils.learning.train_part import STPM
+from utils.data.load_data import Train_Dataloader, Test_Dataloader, Distribution_Dataloader
+from utils.learning.train_part import STPM, Coreset, Distribution
 
 def get_args():
     parser = argparse.ArgumentParser(description='ANOMALYDETECTION')
@@ -29,13 +29,37 @@ def get_args():
     return args
 
 if __name__ == '__main__':
-    #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args = get_args()
     default_root_dir = os.path.join(args.project_root_path, args.category) # ./MVTec/hazelnut
-    trainer = pl.Trainer.from_argparse_args(args, default_root_dir=default_root_dir, max_epochs=args.num_epochs, gpus=1) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
-    model = STPM(args)
-    if args.phase == 'train':
-        trainer.fit(model, train_dataloaders=Train_Dataloader(args))
-        trainer.test(model, dataloaders=Test_Dataloader(args))
-    elif args.phase == 'test':
-        trainer.test(model, dataloaders=Test_Dataloader(args))
+
+    train_dataloader = Train_Dataloader(args)
+    test_dataloader = Test_Dataloader(args)
+
+    # generate coreset
+    coreset_generator_trainer = pl.Trainer.from_argparse_args(args, default_root_dir=default_root_dir, max_epochs=1, gpus=1) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
+    coreset_generator = Coreset(args)
+    coreset_generator_trainer.fit(coreset_generator, train_dataloaders=train_dataloader)
+
+    # generate distribution dataloader
+    distribution_dataloader = Distribution_Dataloader(args, train_dataloader)
+
+    for iter, batch in enumerate(distribution_dataloader) :
+        neighbor, index = batch
+        breakpoint()
+
+    # train coreset distribution
+
+    # eval anomaly score from test_dataloader
+
+    distribution_trainer = pl.Trainer.from_argparse_args(args, default_root_dir=default_root_dir, max_epochs=args.num_epochs, gpus=1) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
+    distribution_model = Distribution(args)
+    distribution_trainer.fit(distribution_model, train_dataloaders=train_dataloader)
+    distribution_trainer.test(distribution_model, dataloaders=test_dataloader)
+
+    # trainer = pl.Trainer.from_argparse_args(args, default_root_dir=default_root_dir, max_epochs=args.num_epochs, gpus=1) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
+    # model = STPM(args)
+    # if args.phase == 'train':
+    #     trainer.fit(model, train_dataloaders=Train_Dataloader(args))
+    #     trainer.test(model, dataloaders=Test_Dataloader(args))
+    # elif args.phase == 'test':
+    #     trainer.test(model, dataloaders=Test_Dataloader(args))
