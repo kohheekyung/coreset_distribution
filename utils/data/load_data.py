@@ -3,7 +3,7 @@ import glob
 from torch.utils.data import Dataset
 from PIL import Image
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 
 from utils.data.transforms import Transform, GT_Transform
 import faiss
@@ -92,7 +92,7 @@ class Distribution_Dataset_Generator():
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         self.args = args
-        self.padding = 2
+        self.padding = 1
 
         self.init_features()
         def hook_t(module, input, output):
@@ -189,6 +189,11 @@ class Distribution_Dataset_Generator():
             embedding_list_, embedding_indices_list_ = self.make_embedding_list(embedding_, embedding_indices)
             self.embedding_list.extend(embedding_list_)
             self.embedding_indices_list.extend(embedding_indices_list_)
+            
+    def get_data_size(self):
+        input_size = self.index.reconstruct(0).shape[0] * (pow(self.padding*2+1, 2) - 1)
+        output_size = self.index.ntotal
+        return input_size, output_size
 
     def __len__(self):
         return len(self.embedding_indices_list) * np.prod(self.embedding_indices_list[0].shape[1:])
@@ -205,19 +210,24 @@ class Distribution_Dataset_Generator():
         pad_width = ((0,),(self.padding,),(self.padding,))
         embedding_pad = np.pad(embedding, pad_width, "constant") # E x (W+1) x (H+1)
 
-        index = embedding_indices[:, i_idx, j_idx]
+        index = embedding_indices[0, i_idx, j_idx]
         neighbor = np.zeros(shape=(0,))
         for di in range(-self.padding, self.padding+1) :
             for dj in range(-self.padding, self.padding+1) :
                 if di == 0 and dj == 0 :
                     continue
                 neighbor = np.concatenate((neighbor, embedding_pad[:, i_idx+di+self.padding, j_idx+dj+self.padding]))
-
-        return neighbor, index
+        return neighbor.astype(np.float32), index
     
-def Distribution_Dataloader(args, dataloader):
+def Distribution_Train_Dataloader(args, dataloader):
     distribution_dataset_generator = Distribution_Dataset_Generator(args)
     distribution_dataset_generator.generate(dataloader)
+    input_size, output_size = distribution_dataset_generator.get_data_size()
+    
+    val_size = int(len(distribution_dataset_generator) * 0.1)
+    train_size = len(distribution_dataset_generator) - val_size
+    train_dataset, val_dataset = random_split(distribution_dataset_generator, [train_size, val_size])
 
-    distribution_dataloader = DataLoader(distribution_dataset_generator, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers) #, pin_memory=True)
-    return distribution_dataloader
+    distribution_train_dataloader= DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True, num_workers=args.num_workers) #, pin_memory=True)
+    distribution_val_dataloader= DataLoader(val_dataset, batch_size=args.train_batch_size, shuffle=False, num_workers=args.num_workers) #, pin_memory=True)
+    return distribution_train_dataloader, distribution_val_dataloader, input_size, output_size

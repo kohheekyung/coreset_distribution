@@ -2,16 +2,15 @@ import pytorch_lightning as pl
 import argparse
 import os
 
-from utils.data.load_data import Train_Dataloader, Test_Dataloader, Distribution_Dataloader
-from utils.learning.train_part import STPM, Coreset, Distribution
+from utils.data.load_data import Train_Dataloader, Test_Dataloader, Distribution_Train_Dataloader
+from utils.learning.train_part import STPM, Coreset, Distribution, AC_Model
 
 def get_args():
     parser = argparse.ArgumentParser(description='ANOMALYDETECTION')
     parser.add_argument('--phase', choices=['train','test'], default='train')
     parser.add_argument('--dataset_path', default='../dataset/MVTecAD') # ./MVTec
     parser.add_argument('--category', default='hazelnut')
-    parser.add_argument('--num_epochs', default=1)
-    parser.add_argument('--batch_size', default=32)
+    parser.add_argument('--batch_size', default=64)
     parser.add_argument('--num_workers', default=4) # 0
     parser.add_argument('--load_size', default=256) # 256
     parser.add_argument('--input_size', default=224)
@@ -25,10 +24,15 @@ def get_args():
     parser.add_argument('--visualize_tsne', default=False, action='store_true', help='Whether to visualize t-SNE projection')
     parser.add_argument('--whitening', default=False, action='store_true', help='Whether to use whitening features')
     parser.add_argument('--whitening_offset', type=float, default=0.001)
+    parser.add_argument('--num_epochs', default=5)
+    parser.add_argument('--learning_rate', type=float, default=0.001)
+    parser.add_argument('--train_batch_size', default=2048)
     args = parser.parse_args()
     return args
 
 if __name__ == '__main__':
+    pl.seed_everything(1234)
+    
     args = get_args()
     default_root_dir = os.path.join(args.project_root_path, args.category) # ./MVTec/hazelnut
 
@@ -41,25 +45,14 @@ if __name__ == '__main__':
     coreset_generator_trainer.fit(coreset_generator, train_dataloaders=train_dataloader)
 
     # generate distribution dataloader
-    distribution_dataloader = Distribution_Dataloader(args, train_dataloader)
-
-    for iter, batch in enumerate(distribution_dataloader) :
-        neighbor, index = batch
-        breakpoint()
+    distribution_train_dataloader, distribution_val_dataloader, dist_input_size, dist_output_size = Distribution_Train_Dataloader(args, train_dataloader)
 
     # train coreset distribution
+    # distribution_trainer = pl.Trainer.from_argparse_args(args, default_root_dir=default_root_dir, max_epochs=args.num_epochs, gpus=1) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
+    # distribution_model = Distribution(args, dist_input_size, dist_output_size)
+    # distribution_trainer.fit(distribution_model, train_dataloaders=distribution_train_dataloader, val_dataloaders=distribution_val_dataloader)
 
     # eval anomaly score from test_dataloader
-
-    distribution_trainer = pl.Trainer.from_argparse_args(args, default_root_dir=default_root_dir, max_epochs=args.num_epochs, gpus=1) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
-    distribution_model = Distribution(args)
-    distribution_trainer.fit(distribution_model, train_dataloaders=train_dataloader)
-    distribution_trainer.test(distribution_model, dataloaders=test_dataloader)
-
-    # trainer = pl.Trainer.from_argparse_args(args, default_root_dir=default_root_dir, max_epochs=args.num_epochs, gpus=1) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
-    # model = STPM(args)
-    # if args.phase == 'train':
-    #     trainer.fit(model, train_dataloaders=Train_Dataloader(args))
-    #     trainer.test(model, dataloaders=Test_Dataloader(args))
-    # elif args.phase == 'test':
-    #     trainer.test(model, dataloaders=Test_Dataloader(args))
+    anomaly_calculator = pl.Trainer.from_argparse_args(args, default_root_dir=default_root_dir, max_epochs=1, gpus=1) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
+    ac_model = AC_Model(args, dist_input_size, dist_output_size)
+    anomaly_calculator.test(ac_model, dataloaders=test_dataloader)
