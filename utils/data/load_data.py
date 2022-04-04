@@ -92,7 +92,7 @@ class Distribution_Dataset_Generator():
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         self.args = args
-        self.padding = 1
+        self.padding = args.dist_padding
 
         self.init_features()
         def hook_t(module, input, output):
@@ -179,19 +179,17 @@ class Distribution_Dataset_Generator():
 
             # find index of embedding vector which is closest to self.index
             embedding_t = embedding_.transpose(0,2,3,1) # N x W x H x E
-            embedding_list = embedding_t.reshape(-1, embedding_t.shape[-1])
+            embedding_list = embedding_t.reshape(-1, embedding_t.shape[-1]) # (N x W x H) x E
 
-            embedding_scores, embedding_indices = self.index.search(embedding_list, k=1)
-            embedding_scores = np.sqrt(embedding_scores)
+            _, embedding_indices = self.index.search(embedding_list, k=1) # (N x W x H) x 1
             embedding_indices = embedding_indices.reshape(embedding_t.shape[0:3] + (1,)).transpose(0,3,1,2) # N x 1 x W x H
-            embedding_scores = embedding_scores.reshape(embedding_t.shape[0:3] + (1,)).transpose(0,3,1,2) # N x 1 x W x H
 
             embedding_list_, embedding_indices_list_ = self.make_embedding_list(embedding_, embedding_indices)
             self.embedding_list.extend(embedding_list_)
             self.embedding_indices_list.extend(embedding_indices_list_)
             
     def get_data_size(self):
-        input_size = self.index.reconstruct(0).shape[0] * (pow(self.padding*2+1, 2) - 1)
+        input_size = self.index.reconstruct(0).shape[0] * (pow(self.padding*2 + 1, 2) - 1)
         output_size = self.index.ntotal
         return input_size, output_size
 
@@ -222,12 +220,12 @@ class Distribution_Dataset_Generator():
 def Distribution_Train_Dataloader(args, dataloader):
     distribution_dataset_generator = Distribution_Dataset_Generator(args)
     distribution_dataset_generator.generate(dataloader)
-    input_size, output_size = distribution_dataset_generator.get_data_size()
+    dist_input_size, dist_output_size = distribution_dataset_generator.get_data_size()
     
     val_size = int(len(distribution_dataset_generator) * 0.1)
     train_size = len(distribution_dataset_generator) - val_size
     train_dataset, val_dataset = random_split(distribution_dataset_generator, [train_size, val_size])
 
-    distribution_train_dataloader= DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True, num_workers=args.num_workers) #, pin_memory=True)
-    distribution_val_dataloader= DataLoader(val_dataset, batch_size=args.train_batch_size, shuffle=False, num_workers=args.num_workers) #, pin_memory=True)
-    return distribution_train_dataloader, distribution_val_dataloader, input_size, output_size
+    distribution_train_dataloader= DataLoader(train_dataset, batch_size=args.dist_batch_size, shuffle=True, num_workers=args.num_workers) #, pin_memory=True)
+    distribution_val_dataloader= DataLoader(val_dataset, batch_size=args.dist_batch_size, shuffle=False, num_workers=args.num_workers) #, pin_memory=True)
+    return distribution_train_dataloader, distribution_val_dataloader, dist_input_size, dist_output_size

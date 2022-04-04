@@ -5,10 +5,10 @@ from math import sqrt
 
 class Distribution_Model(nn.Module):
     """
-    Default LinearNet which has only one fc layer
+    Default LinearNet which has 3 fc layers
     """
     def __init__(self, args, input_size, output_size):
-        # input_size : ~1536 * 8, output_size : ~209
+        # input_size : ~1536 * 8, output_size : ~256
         super().__init__()
         self.l1 = torch.nn.Linear(input_size, 1024)
         self.l2 = torch.nn.Linear(1024, 512)

@@ -23,7 +23,7 @@ def Transform(load_size, input_size) :
 
 def GT_Transform(load_size, input_size) :
     """
-    Default transform from ground truth image to tensor (x normalize)
+    Default transform from ground truth image to tensor (not normalize)
     Args:
         load_size (int): Resize shape
         input_size (int): CenterCrop shape
