@@ -158,10 +158,10 @@ class Distribution_Dataset_Generator():
 
     def generate(self, dataloader):
         self.embedding_dir_path = os.path.join('./', 'embeddings', self.args.category)
-        self.index = faiss.read_index(os.path.join(self.embedding_dir_path,'index.faiss'))
+        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,'dist_coreset_index.faiss'))
         if torch.cuda.is_available():
             res = faiss.StandardGpuResources()
-            self.index = faiss.index_cpu_to_gpu(res, 0 ,self.index)
+            self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.dist_coreset_index)
 
         for iter, batch in enumerate(dataloader):
             x, _, _, _, _ = batch
@@ -177,11 +177,11 @@ class Distribution_Dataset_Generator():
             else :
                 embedding_ = np.array(features[0].cpu())
 
-            # find index of embedding vector which is closest to self.index
+            # find index of embedding vector which is closest to self.dist_coreset_index
             embedding_t = embedding_.transpose(0,2,3,1) # N x W x H x E
             embedding_list = embedding_t.reshape(-1, embedding_t.shape[-1]) # (N x W x H) x E
 
-            _, embedding_indices = self.index.search(embedding_list, k=1) # (N x W x H) x 1
+            _, embedding_indices = self.dist_coreset_index.search(embedding_list, k=1) # (N x W x H) x 1
             embedding_indices = embedding_indices.reshape(embedding_t.shape[0:3] + (1,)).transpose(0,3,1,2) # N x 1 x W x H
 
             embedding_list_, embedding_indices_list_ = self.make_embedding_list(embedding_, embedding_indices)
@@ -189,8 +189,8 @@ class Distribution_Dataset_Generator():
             self.embedding_indices_list.extend(embedding_indices_list_)
             
     def get_data_size(self):
-        input_size = self.index.reconstruct(0).shape[0] * (pow(self.padding*2 + 1, 2) - 1)
-        output_size = self.index.ntotal
+        input_size = self.dist_coreset_index.reconstruct(0).shape[0] * (pow(self.padding*2 + 1, 2) - 1)
+        output_size = self.dist_coreset_index.ntotal
         return input_size, output_size
 
     def __len__(self):

@@ -8,11 +8,11 @@ class Distribution_Model(nn.Module):
     Default LinearNet which has 3 fc layers
     """
     def __init__(self, args, input_size, output_size):
-        # input_size : ~1536 * 8, output_size : ~256
+        # input_size : ~1536 * 8, output_size : ~512
         super().__init__()
-        self.l1 = torch.nn.Linear(input_size, 1024)
-        self.l2 = torch.nn.Linear(1024, 512)
-        self.l3 = torch.nn.Linear(512, output_size)
+        self.l1 = nn.Linear(input_size, 2048)
+        self.l2 = nn.Linear(2048, 1024)
+        self.l3 = nn.Linear(1024, output_size)
 
     def forward(self, x):
         x = torch.relu(self.l1(x))

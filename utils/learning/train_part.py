@@ -162,10 +162,15 @@ class Coreset(pl.LightningModule):
         self.randomprojector.fit(total_embeddings)
         
         # Coreset Subsampling
+        embedding_coreset_size = int(self.args.coreset_sampling_ratio * total_embeddings.shape[0])
+        dist_coreset_size = self.args.dist_coreset_size
+        select_batch_size = max(embedding_coreset_size, dist_coreset_size)
+
         selector = kCenterGreedy(total_embeddings, 0, 0)
-        selected_idx = selector.select_batch(model=self.randomprojector, already_selected=[], N=self.args.coreset_sampling_size)
-        self.embedding_coreset = total_embeddings[selected_idx]
-        
+        selected_idx = selector.select_batch(model=self.randomprojector, already_selected=[], N=select_batch_size)
+        self.embedding_coreset = total_embeddings[selected_idx][:embedding_coreset_size]
+        self.dist_coreset = total_embeddings[selected_idx][:dist_coreset_size]
+
         # if self.args.whitening : 
         #     self.embedding_mean, self.embedding_std = np.mean(self.embedding_coreset, axis=0), np.std(self.embedding_coreset, axis=0)
         #     self.embedding_coreset = (self.embedding_coreset - self.embedding_mean.reshape(1, -1)) / (self.args.whitening_offset + self.embedding_std.reshape(1, -1))
@@ -174,9 +179,13 @@ class Coreset(pl.LightningModule):
         print('final embedding size : ', self.embedding_coreset.shape)
         
         #faiss
-        self.index = faiss.IndexFlatL2(self.embedding_coreset.shape[1])
-        self.index.add(self.embedding_coreset)
-        faiss.write_index(self.index, os.path.join(self.embedding_dir_path,'index.faiss'))
+        self.embedding_coreset_index = faiss.IndexFlatL2(self.embedding_coreset.shape[1])
+        self.embedding_coreset_index.add(self.embedding_coreset)
+        faiss.write_index(self.embedding_coreset_index, os.path.join(self.embedding_dir_path,'embedding_coreset_index.faiss'))
+
+        self.dist_coreset_index = faiss.IndexFlatL2(self.dist_coreset.shape[1])
+        self.dist_coreset_index.add(self.dist_coreset)
+        faiss.write_index(self.dist_coreset_index, os.path.join(self.embedding_dir_path,'dist_coreset_index.faiss'))
 
     def configure_optimizers(self):
         return None
@@ -209,7 +218,6 @@ class Distribution(pl.LightningModule):
         y_hat = self(x)
         loss = F.cross_entropy(y_hat, y)
         self.log('train_loss', loss, prog_bar=True)
-        self.logger.experiment.add_scalar('train_loss', loss)
         self.train_loss += loss * x.shape[0]
         self.train_size += x.shape[0]
         return loss
@@ -226,7 +234,6 @@ class Distribution(pl.LightningModule):
         y_hat = self(x)
         loss = F.cross_entropy(y_hat, y)
         self.log('valid_loss', loss, prog_bar=True)
-        self.logger.experiment.add_scalar('val_loss', loss)
         self.val_loss += loss * x.shape[0]
         self.val_size += x.shape[0]
         return loss
@@ -249,7 +256,9 @@ class Distribution(pl.LightningModule):
             shutil.copyfile(os.path.join(self.embedding_dir_path, 'model.pt'), os.path.join(self.embedding_dir_path, 'best_model.pt'))
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.args.learning_rate)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.args.learning_rate)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=self.args.step_size, gamma=0.1)
+        return [optimizer], [scheduler]
     
 class AC_Model(pl.LightningModule):
     def __init__(self, args, dist_input_size, dist_output_size):
@@ -300,14 +309,14 @@ class AC_Model(pl.LightningModule):
         self.dist_model = Distribution_Model(args, dist_input_size, dist_output_size)        
         self.embedding_dir_path = os.path.join('./', 'embeddings', self.args.category)
         self.dist_model.load_state_dict(torch.load(os.path.join(self.embedding_dir_path, 'best_model.pt'))['model'])
-        
-        self.padding = args.dist_padding
 
     def init_results_list(self):
         self.gt_list_px_lvl = []
         self.pred_list_px_lvl = []
+        self.pred_list_px_lvl_old = []
         self.gt_list_img_lvl = []
         self.pred_list_img_lvl = []
+        self.pred_list_img_lvl_old = []
         self.img_path_list = []
         self.img_type_list = []
         # self.viz_feature_list = []
@@ -321,11 +330,14 @@ class AC_Model(pl.LightningModule):
         _ = self.feature_model(x_t)
         return self.features
 
-    def save_anomaly_map(self, anomaly_map, input_img, gt_img, file_name, x_type):
+    def save_anomaly_map(self, anomaly_map, anomaly_map_old, input_img, gt_img, file_name, x_type):
         if anomaly_map.shape != input_img.shape:
             anomaly_map = cv2.resize(anomaly_map, (input_img.shape[0], input_img.shape[1]))
         anomaly_map_norm = min_max_norm(anomaly_map)
         anomaly_map_norm_hm = cvt2heatmap(anomaly_map_norm*255)
+
+        anomaly_map_norm_old = min_max_norm(anomaly_map_old)
+        anomaly_map_norm_hm_old = cvt2heatmap(anomaly_map_norm_old*255)
 
         # anomaly map on image
         heatmap = cvt2heatmap(anomaly_map_norm*255)
@@ -334,6 +346,7 @@ class AC_Model(pl.LightningModule):
         # save images
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}.jpg'), input_img)
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap.jpg'), anomaly_map_norm_hm)
+        cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_old.jpg'), anomaly_map_norm_hm_old)
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_on_img.jpg'), hm_on_img)
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_gt.jpg'), gt_img)
 
@@ -343,10 +356,12 @@ class AC_Model(pl.LightningModule):
     def on_test_start(self):
         self.feature_model.eval() # to stop running_var move (maybe not critical)
         self.dist_model.eval() # to stop running_var move (maybe not critical)
-        self.index = faiss.read_index(os.path.join(self.embedding_dir_path,'index.faiss'))
+        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,'dist_coreset_index.faiss'))
+        self.embedding_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,'embedding_coreset_index.faiss'))
         if torch.cuda.is_available():
             res = faiss.StandardGpuResources()
-            self.index = faiss.index_cpu_to_gpu(res, 0 ,self.index)
+            self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.dist_coreset_index)
+            self.embedding_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.embedding_coreset_index)
         self.init_results_list()
         self.embedding_dir_path, self.sample_path, self.source_code_save_path = prep_dirs(self.logger.log_dir, self.args.category)
 
@@ -368,66 +383,72 @@ class AC_Model(pl.LightningModule):
         embedding_test = np.array(reshape_embedding(embedding_)) # (W x H) x E
         
         embedding_ = embedding_.squeeze() # E x W x H
-        pad_width = ((0,),(self.padding,),(self.padding,))
+        pad_width = ((0,),(self.args.dist_padding,),(self.args.dist_padding,))
         embedding_pad = np.pad(embedding_, pad_width, "constant") # E x (W+1) x (H+1)
-        neighbors = np.zeros(shape=(embedding_.shape[1], embedding_.shape[2], embedding_.shape[0]*(pow(self.padding*2+1, 2) - 1))) # W x H x NE
+        neighbors = np.zeros(shape=(embedding_.shape[1], embedding_.shape[2], embedding_.shape[0]*(pow(self.args.dist_padding*2+1, 2) - 1))) # W x H x NE
         # construct neighbor features
         for i_idx in range(embedding_.shape[1]) :
             for j_idx in range(embedding_.shape[2]) :
                 neighbor = np.zeros(shape=(0,))
-                for di in range(-self.padding, self.padding+1) :
-                    for dj in range(-self.padding, self.padding+1) :
+                for di in range(-self.args.dist_padding, self.args.dist_padding+1) :
+                    for dj in range(-self.args.dist_padding, self.args.dist_padding+1) :
                         if di == 0 and dj == 0 :
                             continue
-                        neighbor = np.concatenate((neighbor, embedding_pad[:, i_idx+di+self.padding, j_idx+dj+self.padding]))
+                        neighbor = np.concatenate((neighbor, embedding_pad[:, i_idx+di+self.args.dist_padding, j_idx+dj+self.args.dist_padding]))
                 neighbors[i_idx, j_idx] = neighbor                   
-        
-        # if self.args.whitening : 
-        #     embedding_test = (embedding_test - self.embedding_mean.reshape(1, -1)) / (self.args.whitening_offset + self.embedding_std.reshape(1, -1))
             
         # if self.args.visualize_tsne :
         #     self.viz_feature_list += [embedding_test[idx] for idx in range(embedding_test.shape[0])]
         #     self.viz_class_idx_list += [label.cpu().numpy()[0]] * embedding_test.shape[0]
                 
-        embedding_score, embedding_indices = self.index.search(embedding_test, k=1) # (W x H) x 1
+        embedding_score, embedding_indices = self.embedding_coreset_index.search(embedding_test, k=self.args.n_neighbors) # (W x H) x self.args.n_neighbors
         embedding_score = np.sqrt(embedding_score)
         
         max_anomaly_idx = np.argmax(embedding_score[:, 0])
         max_embedding_score = embedding_score[max_anomaly_idx, 0] # maximum embedding score
-        mean_embedding_score = np.mean(embedding_score[:, 0])
         max_anomaly_feature = embedding_test[max_anomaly_idx]
-        max_anomaly_coreset = self.index.reconstruct(embedding_indices[max_anomaly_idx].item()) # nearest coreset-feature from max_anomaly_feature
-        _, neighbors_max_anomaly_coreset = self.index.search(max_anomaly_coreset.reshape(1, -1) , k=self.args.n_neighbors)
+        max_anomaly_coreset_feature = self.embedding_coreset_index.reconstruct(embedding_indices[max_anomaly_idx, 0].item()) # nearest embedding coreset-feature from max_anomaly_feature
+        _, neighbors_macf_indices, neighbors_macf_recons = self.embedding_coreset_index.search_and_reconstruct(max_anomaly_coreset_feature.reshape(1, -1) , k=self.args.n_neighbors)
         
         neighbor_index = faiss.IndexFlatL2(embedding_test.shape[1])
+        neighbor_index.add(neighbors_macf_recons.squeeze(0))
         
-        for i in range(neighbors_max_anomaly_coreset.shape[1]) :
-            neighbor_index.add(self.index.reconstruct(neighbors_max_anomaly_coreset[0, i].item()).reshape(1, -1))
+        # for i in range(self.args.n_neighbors) :
+        #     neighbor_index.add(self.embedding_coreset_index.reconstruct(neighbors_macf_indices[0, i].item()).reshape(1, -1))
         
         neighbor_distances, _ = neighbor_index.search(max_anomaly_feature.reshape(1, -1), k=self.args.n_neighbors)
         neighbor_distances = np.sqrt(neighbor_distances)
-        w = 1 - 1 / np.sum(np.exp(neighbor_distances - max_embedding_score))
+        weights_from_paper = 1 - 1 / np.sum(np.exp(neighbor_distances - max_embedding_score))
+
+        weights_from_code = 1 - 1 / np.sum(np.exp(embedding_score[max_anomaly_idx] - max_embedding_score))
         
         # calc anomaly image score
-        #anomaly_img_score = w * max_embedding_score # Image-level score
-        anomaly_img_score = max_embedding_score
-        #anomaly_img_score = mean_embedding_score # simplified Image-level score
+        #anomaly_img_score_old = weights_from_code * max_embedding_score # Image-level score
+        anomaly_img_score_old = weights_from_paper * max_embedding_score # Image-level score
+        #anomaly_img_score_old = max_embedding_score
         
         # calc anomaly pixel score
         neighbors = neighbors.reshape(-1, neighbors.shape[2]).astype(np.float32) # (W x H) x NE
-        y_hat = self.dist_model(torch.tensor(neighbors).cuda()).cpu() # (W x H) x self.index.ntotal
-        anomaly_pxl_score = np.zeros(shape=(neighbors.shape[0]))
+        y_hat = self.dist_model(torch.tensor(neighbors).cuda()).cpu() # (W x H) x self.dist_coreset_index.ntotal
+        anomaly_pxl_likelihood = np.zeros(shape=(neighbors.shape[0])) # (W x H)
 
-        distances, indices = self.index.search(embedding_test, k=self.index.ntotal)
+        distances, indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
         distances = np.sqrt(distances)
-        prob_embedding = calc_prob_embedding(distances, gamma=0.5)
+        prob_embedding = calc_prob_embedding(distances, gamma=self.args.prob_gamma)
+
         for i in range(neighbors.shape[0]) :
+            # if indices[i, 0] != torch.argmax(y_hat[i]) and x_type == 'good':
+            #     breakpoint()
+
             softmax = F.softmax(y_hat[i] / self.args.softmax_temperature).cpu().numpy()
-            for k in range(self.index.ntotal) :
-                anomaly_pxl_score[i] += prob_embedding[i, k] * softmax[indices[i, k]]
+            for k in range(self.dist_coreset_index.ntotal) :
+                anomaly_pxl_likelihood[i] += prob_embedding[i, k] * softmax[indices[i, k]]
 
         # negative log likelihood
-        anomaly_pxl_score = -np.log(anomaly_pxl_score)
+        #anomaly_pxl_score = -np.log(anomaly_pxl_score)
+        anomaly_pxl_score = -np.log(calc_prob_embedding(embedding_score[:, 0], gamma=self.args.prob_gamma) * anomaly_pxl_likelihood)
+
+        anomaly_img_score = np.max(anomaly_pxl_score)
         
         if self.args.block_index == '1+2':
             reshape_size = (56,56)
@@ -444,39 +465,53 @@ class AC_Model(pl.LightningModule):
         embedding_score = embedding_score[:,0].reshape(reshape_size)
     
         anomaly_map = anomaly_pxl_score
-        # anomaly_map = embedding_score
+        anomaly_map_old = embedding_score
                 
         anomaly_map_resized = cv2.resize(anomaly_map, (self.args.input_size, self.args.input_size))
         anomaly_map_resized_blur = gaussian_filter(anomaly_map_resized, sigma=4)
+        anomaly_map_old_resized = cv2.resize(anomaly_map_old, (self.args.input_size, self.args.input_size))
+        anomaly_map_old_resized_blur = gaussian_filter(anomaly_map_old_resized, sigma=4)
         
         gt_np = gt.cpu().numpy()[0,0].astype(int)
         self.gt_list_px_lvl.extend(gt_np.ravel())
         self.pred_list_px_lvl.extend(anomaly_map_resized_blur.ravel())
+        self.pred_list_px_lvl_old.extend(anomaly_map_old_resized_blur.ravel())
         self.gt_list_img_lvl.append(label.cpu().numpy()[0])
         self.pred_list_img_lvl.append(anomaly_img_score)
+        self.pred_list_img_lvl_old.append(anomaly_img_score_old)
         self.img_path_list.extend(file_name)
         self.img_type_list.append(x_type[0])
         
         # save images
         x = self.inv_normalize(x).clip(0,1)
         input_x = cv2.cvtColor(x.permute(0,2,3,1).cpu().numpy()[0]*255, cv2.COLOR_BGR2RGB)
-        self.save_anomaly_map(anomaly_map_resized_blur, input_x, gt_np*255, file_name[0], x_type[0])
-
-        # if x_type != 'good':
-        #     breakpoint()
+        self.save_anomaly_map(anomaly_map_resized_blur, anomaly_map_old_resized_blur, input_x, gt_np*255, file_name[0], x_type[0])
 
     def test_epoch_end(self, outputs):
         print("Total pixel-level auc-roc score :")
         pixel_auc = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl)
         print(pixel_auc)
+        print("Total pixel-level auc-roc score for old version :")
+        pixel_auc_old = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl_old)
+        print(pixel_auc_old)
+
         print("Total image-level auc-roc score :")
-        
         img_auc = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl)
         print(img_auc)
+        print("Total image-level auc-roc score for old version :")
+        img_auc_old = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl_old)
+        print(img_auc_old)
+
         print('test_epoch_end')
-        values = {'pixel_auc': pixel_auc, 'img_auc': img_auc}
+        values = {'pixel_auc': pixel_auc, 'pixel_auc_old': pixel_auc_old, 'img_auc': img_auc, 'img_auc_old': img_auc_old}
         
         # if self.args.visualize_tsne:
         #     visualize_TSNE(self.viz_feature_list, self.viz_class_idx_list, os.path.join(self.logger.log_dir, "visualize_TSNE.png"))
         
         self.log_dict(values)
+        
+        f = open(os.path.join(self.args.project_root_path, "score_result.csv"), "a")
+        data = [self.args.category, str(self.args.coreset_sampling_ratio), str(self.args.dist_coreset_size), str(self.args.dist_padding), str(self.args.prob_gamma), str(self.args.softmax_temperature), str(pixel_auc), str(pixel_auc_old), str(img_auc), str(img_auc_old)]
+        data = ','.join(data) + '\n'
+        f.write(data)
+        f.close()

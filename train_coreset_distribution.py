@@ -11,11 +11,11 @@ def get_args():
     parser.add_argument('--phase', choices=['train','test'], default='train')
     parser.add_argument('--dataset_path', default='../dataset/MVTecAD') # ./MVTec
     parser.add_argument('--category', default='hazelnut')
-    parser.add_argument('--batch_size', default=64)
+    parser.add_argument('--batch_size', default=256)
     parser.add_argument('--num_workers', default=4) # 0
     parser.add_argument('--load_size', default=256) # 256
     parser.add_argument('--input_size', default=224)
-    parser.add_argument('--coreset_sampling_size', type=int, default=256) # 256
+    parser.add_argument('--coreset_sampling_ratio', type=float, default=0.01) # 0.001
     parser.add_argument('--project_root_path', default=r'./result') # ./test
     parser.add_argument('--save_src_code', default=True)
     parser.add_argument('--save_anomaly_map', default=True)
@@ -25,11 +25,14 @@ def get_args():
     parser.add_argument('--visualize_tsne', default=False, action='store_true', help='Whether to visualize t-SNE projection')
     # parser.add_argument('--whitening', default=False, action='store_true', help='Whether to use whitening features')
     # parser.add_argument('--whitening_offset', type=float, default=0.001)
+    parser.add_argument('--dist_coreset_size', type=int, default=512) # 512
     parser.add_argument('--dist_padding', type=int, default=1)
-    parser.add_argument('--num_epochs', default=10)
+    parser.add_argument('--num_epochs', default=20)
     parser.add_argument('--learning_rate', type=float, default=0.01)
-    parser.add_argument('--dist_batch_size', default=4096)
+    parser.add_argument('--step_size', type=int, default=10)
+    parser.add_argument('--dist_batch_size', default=8192)
     parser.add_argument('--softmax_temperature', type=float, default=1.0)
+    parser.add_argument('--prob_gamma', type=float, default=0.99)
     args = parser.parse_args()
     return args
 
@@ -44,7 +47,7 @@ if __name__ == '__main__':
 
     # generate coreset
     if args.phase == 'train' :
-        coreset_generator_trainer = pl.Trainer.from_argparse_args(args, default_root_dir=default_root_dir, max_epochs=1, gpus=1) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
+        coreset_generator_trainer = pl.Trainer.from_argparse_args(args, default_root_dir=os.path.join(default_root_dir, 'coreset'), max_epochs=1, gpus=1) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
         coreset_generator = Coreset(args)
         coreset_generator_trainer.fit(coreset_generator, train_dataloaders=train_dataloader)
 
@@ -53,12 +56,12 @@ if __name__ == '__main__':
 
     # train coreset distribution
     if args.phase == 'train' :
-        logger = TensorBoardLogger("tb_logs", name="my_model")
-        distribution_trainer = pl.Trainer.from_argparse_args(args, default_root_dir=default_root_dir, max_epochs=args.num_epochs, gpus=1) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
+        tb_logger = TensorBoardLogger(save_dir=default_root_dir, name="distribution")
+        distribution_trainer = pl.Trainer.from_argparse_args(args, max_epochs=args.num_epochs, gpus=1, logger=tb_logger) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
         distribution_model = Distribution(args, dist_input_size, dist_output_size)
-        distribution_trainer.fit(distribution_model, train_dataloaders=distribution_train_dataloader, val_dataloaders=distribution_val_dataloader, logger=logger)
+        distribution_trainer.fit(distribution_model, train_dataloaders=distribution_train_dataloader, val_dataloaders=distribution_val_dataloader)
 
     # eval anomaly score from test_dataloader
-    anomaly_calculator = pl.Trainer.from_argparse_args(args, default_root_dir=default_root_dir, max_epochs=1, gpus=1) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
+    anomaly_calculator = pl.Trainer.from_argparse_args(args, default_root_dir=os.path.join(default_root_dir, 'anomaly'), max_epochs=1, gpus=1) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
     ac_model = AC_Model(args, dist_input_size, dist_output_size)
     anomaly_calculator.test(ac_model, dataloaders=test_dataloader)
