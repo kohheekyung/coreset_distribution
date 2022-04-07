@@ -423,8 +423,8 @@ class AC_Model(pl.LightningModule):
         weights_from_code = 1 - 1 / np.sum(np.exp(embedding_score[max_anomaly_idx] - max_embedding_score))
         
         # calc anomaly image score
-        #anomaly_img_score_old = weights_from_code * max_embedding_score # Image-level score
-        anomaly_img_score_old = weights_from_paper * max_embedding_score # Image-level score
+        anomaly_img_score_old = weights_from_code * max_embedding_score # Image-level score
+        #anomaly_img_score_old = weights_from_paper * max_embedding_score # Image-level score
         #anomaly_img_score_old = max_embedding_score
         
         # calc anomaly pixel score
@@ -445,8 +445,8 @@ class AC_Model(pl.LightningModule):
                 anomaly_pxl_likelihood[i] += prob_embedding[i, k] * softmax[indices[i, k]]
 
         # negative log likelihood
-        #anomaly_pxl_score = -np.log(anomaly_pxl_score)
-        anomaly_pxl_score = -np.log(calc_prob_embedding(embedding_score[:, 0], gamma=self.args.prob_gamma) * anomaly_pxl_likelihood)
+        anomaly_pxl_score = -np.log(anomaly_pxl_likelihood)
+        #anomaly_pxl_score = -np.log(calc_prob_embedding(embedding_score[:, 0], gamma=self.args.prob_gamma) * anomaly_pxl_likelihood)
 
         anomaly_img_score = np.max(anomaly_pxl_score)
         
