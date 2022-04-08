@@ -264,6 +264,7 @@ class AC_Model(pl.LightningModule):
     def __init__(self, args, dist_input_size, dist_output_size):
         super(AC_Model, self).__init__()
         
+        self.save_hyperparameters(args)
         self.args = args
 
         self.init_features()
@@ -445,8 +446,8 @@ class AC_Model(pl.LightningModule):
                 anomaly_pxl_likelihood[i] += prob_embedding[i, k] * softmax[indices[i, k]]
 
         # negative log likelihood
-        anomaly_pxl_score = -np.log(anomaly_pxl_likelihood)
-        #anomaly_pxl_score = -np.log(calc_prob_embedding(embedding_score[:, 0], gamma=self.args.prob_gamma) * anomaly_pxl_likelihood)
+        #anomaly_pxl_score = -np.log(anomaly_pxl_likelihood)
+        anomaly_pxl_score = -np.log(calc_prob_embedding(embedding_score[:, 0], gamma=self.args.prob_gamma) * anomaly_pxl_likelihood)
 
         anomaly_img_score = np.max(anomaly_pxl_score)
         
