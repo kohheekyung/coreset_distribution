@@ -129,6 +129,6 @@ dmypy.json
 .pyre/
 
 # Result directory
-embeddings/*
+embeddings*
 result/*
 *.sh

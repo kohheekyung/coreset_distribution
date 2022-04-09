@@ -45,10 +45,10 @@ def copy_files(src, dst, ignores=[]):
             os.makedirs(os.path.join(dst, file_name), exist_ok=True)
             copy_files(full_file_name, os.path.join(dst, file_name), ignores)
 
-def prep_dirs(root, category):
+def prep_dirs(root, args):
     # make embeddings dir
     # embeddings_path = os.path.join(root, 'embeddings')
-    embeddings_path = os.path.join('./', 'embeddings', category)
+    embeddings_path = os.path.join('./', f'embeddings_{args.block_index}', args.category)
     os.makedirs(embeddings_path, exist_ok=True)
     # make sample dir
     sample_path = os.path.join(root, 'sample')
@@ -136,7 +136,7 @@ class Coreset(pl.LightningModule):
 
     def on_train_start(self):
         self.feature_model.eval()
-        self.embedding_dir_path = os.path.join('./', 'embeddings', self.args.category)
+        self.embedding_dir_path = os.path.join('./', f'embeddings_{self.args.block_index}', self.args.category)
         os.makedirs(self.embedding_dir_path, exist_ok=True)
         self.embedding_list = []
 
@@ -196,7 +196,7 @@ class Distribution(pl.LightningModule):
 
         self.args = args
         self.model = Distribution_Model(args, dist_input_size, dist_output_size)
-        self.embedding_dir_path = os.path.join('./', 'embeddings', self.args.category)
+        self.embedding_dir_path = os.path.join('./', f'embeddings_{self.args.block_index}', self.args.category)
         os.makedirs(self.embedding_dir_path, exist_ok=True)
         self.best_val_loss=1e+6
         
@@ -308,16 +308,18 @@ class AC_Model(pl.LightningModule):
         self.inv_normalize = INV_Normalize()
         
         self.dist_model = Distribution_Model(args, dist_input_size, dist_output_size)        
-        self.embedding_dir_path = os.path.join('./', 'embeddings', self.args.category)
+        self.embedding_dir_path = os.path.join('./', f'embeddings_{self.args.block_index}', self.args.category)
         self.dist_model.load_state_dict(torch.load(os.path.join(self.embedding_dir_path, f'best_model_{self.args.dist_padding}_{self.args.dist_coreset_size}.pt'))['model'])
 
     def init_results_list(self):
         self.gt_list_px_lvl = []
         self.pred_list_px_lvl = []
-        self.pred_list_px_lvl_old = []
+        self.pred_list_px_lvl_likelihood = []
+        self.pred_list_px_lvl_patchcore = []
         self.gt_list_img_lvl = []
         self.pred_list_img_lvl = []
-        self.pred_list_img_lvl_old = []
+        self.pred_list_img_lvl_likelihood = []
+        self.pred_list_img_lvl_patchcore = []
         self.img_path_list = []
         self.img_type_list = []
         # self.viz_feature_list = []
@@ -331,14 +333,14 @@ class AC_Model(pl.LightningModule):
         _ = self.feature_model(x_t)
         return self.features
 
-    def save_anomaly_map(self, anomaly_map, anomaly_map_old, input_img, gt_img, file_name, x_type):
+    def save_anomaly_map(self, anomaly_map, anomaly_map_patchcore, input_img, gt_img, file_name, x_type):
         if anomaly_map.shape != input_img.shape:
             anomaly_map = cv2.resize(anomaly_map, (input_img.shape[0], input_img.shape[1]))
         anomaly_map_norm = min_max_norm(anomaly_map)
         anomaly_map_norm_hm = cvt2heatmap(anomaly_map_norm*255)
 
-        anomaly_map_norm_old = min_max_norm(anomaly_map_old)
-        anomaly_map_norm_hm_old = cvt2heatmap(anomaly_map_norm_old*255)
+        anomaly_map_norm_patchcore = min_max_norm(anomaly_map_patchcore)
+        anomaly_map_norm_hm_patchcore = cvt2heatmap(anomaly_map_norm_patchcore*255)
 
         # anomaly map on image
         heatmap = cvt2heatmap(anomaly_map_norm*255)
@@ -347,7 +349,7 @@ class AC_Model(pl.LightningModule):
         # save images
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}.jpg'), input_img)
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap.jpg'), anomaly_map_norm_hm)
-        cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_old.jpg'), anomaly_map_norm_hm_old)
+        cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_patchcore.jpg'), anomaly_map_norm_hm_patchcore)
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_on_img.jpg'), hm_on_img)
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_gt.jpg'), gt_img)
 
@@ -364,7 +366,7 @@ class AC_Model(pl.LightningModule):
             self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.dist_coreset_index)
             self.embedding_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.embedding_coreset_index)
         self.init_results_list()
-        self.embedding_dir_path, self.sample_path, self.source_code_save_path = prep_dirs(self.logger.log_dir, self.args.category)
+        self.embedding_dir_path, self.sample_path, self.source_code_save_path = prep_dirs(self.logger.log_dir, self.args)
 
     def test_step(self, batch, batch_idx): # Nearest Neighbour Search
         x, gt, label, file_name, x_type = batch
@@ -424,9 +426,9 @@ class AC_Model(pl.LightningModule):
         weights_from_code = 1 - 1 / np.sum(np.exp(embedding_score[max_anomaly_idx] - max_embedding_score))
         
         # calc anomaly image score
-        anomaly_img_score_old = weights_from_code * max_embedding_score # Image-level score
-        #anomaly_img_score_old = weights_from_paper * max_embedding_score # Image-level score
-        #anomaly_img_score_old = max_embedding_score
+        anomaly_img_score_patchcore = weights_from_code * max_embedding_score # Image-level score
+        #anomaly_img_score_patchcore = weights_from_paper * max_embedding_score # Image-level score
+        #anomaly_img_score_patchcore = max_embedding_score
         
         # calc anomaly pixel score
         neighbors = neighbors.reshape(-1, neighbors.shape[2]).astype(np.float32) # (W x H) x NE
@@ -446,10 +448,11 @@ class AC_Model(pl.LightningModule):
                 anomaly_pxl_likelihood[i] += prob_embedding[i, k] * softmax[indices[i, k]]
 
         # negative log likelihood
-        #anomaly_pxl_score = -np.log(anomaly_pxl_likelihood)
+        anomaly_pxl_score_likelihood = -np.log(anomaly_pxl_likelihood)
         anomaly_pxl_score = -np.log(calc_prob_embedding(embedding_score[:, 0], gamma=self.args.prob_gamma) * anomaly_pxl_likelihood)
 
         anomaly_img_score = np.max(anomaly_pxl_score)
+        anomaly_img_score_likelihood = np.max(anomaly_pxl_score_likelihood)
         
         if self.args.block_index == '1+2':
             reshape_size = (56,56)
@@ -463,48 +466,54 @@ class AC_Model(pl.LightningModule):
             reshape_size = (7,7)
         
         anomaly_pxl_score = anomaly_pxl_score.reshape(reshape_size)
+        anomaly_pxl_score_likelihood = anomaly_pxl_score_likelihood.reshape(reshape_size)
         embedding_score = embedding_score[:,0].reshape(reshape_size)
     
         anomaly_map = anomaly_pxl_score
-        anomaly_map_old = embedding_score
+        anomaly_map_likelhood = anomaly_pxl_score_likelihood
+        anomaly_map_patchcore = embedding_score
                 
         anomaly_map_resized = cv2.resize(anomaly_map, (self.args.input_size, self.args.input_size))
         anomaly_map_resized_blur = gaussian_filter(anomaly_map_resized, sigma=4)
-        anomaly_map_old_resized = cv2.resize(anomaly_map_old, (self.args.input_size, self.args.input_size))
-        anomaly_map_old_resized_blur = gaussian_filter(anomaly_map_old_resized, sigma=4)
+        anomaly_map_likelihood_resized = cv2.resize(anomaly_map_likelhood, (self.args.input_size, self.args.input_size))
+        anomaly_map_likelihood_resized_blur = gaussian_filter(anomaly_map_likelihood_resized, sigma=4)
+        anomaly_map_patchcore_resized = cv2.resize(anomaly_map_patchcore, (self.args.input_size, self.args.input_size))
+        anomaly_map_patchcore_resized_blur = gaussian_filter(anomaly_map_patchcore_resized, sigma=4)
         
         gt_np = gt.cpu().numpy()[0,0].astype(int)
         self.gt_list_px_lvl.extend(gt_np.ravel())
         self.pred_list_px_lvl.extend(anomaly_map_resized_blur.ravel())
-        self.pred_list_px_lvl_old.extend(anomaly_map_old_resized_blur.ravel())
+        self.pred_list_px_lvl_likelihood.extend(anomaly_map_likelihood_resized_blur.ravel())
+        self.pred_list_px_lvl_patchcore.extend(anomaly_map_patchcore_resized_blur.ravel())
         self.gt_list_img_lvl.append(label.cpu().numpy()[0])
         self.pred_list_img_lvl.append(anomaly_img_score)
-        self.pred_list_img_lvl_old.append(anomaly_img_score_old)
+        self.pred_list_img_lvl_likelihood.append(anomaly_img_score_likelihood)
+        self.pred_list_img_lvl_patchcore.append(anomaly_img_score_patchcore)
         self.img_path_list.extend(file_name)
         self.img_type_list.append(x_type[0])
         
         # save images
         x = self.inv_normalize(x).clip(0,1)
         input_x = cv2.cvtColor(x.permute(0,2,3,1).cpu().numpy()[0]*255, cv2.COLOR_BGR2RGB)
-        self.save_anomaly_map(anomaly_map_resized_blur, anomaly_map_old_resized_blur, input_x, gt_np*255, file_name[0], x_type[0])
+        self.save_anomaly_map(anomaly_map_resized_blur, anomaly_map_patchcore_resized_blur, input_x, gt_np*255, file_name[0], x_type[0])
 
     def test_epoch_end(self, outputs):
-        print("Total pixel-level auc-roc score :")
+        # Total pixel-level auc-roc score
         pixel_auc = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl)
-        print(pixel_auc)
-        print("Total pixel-level auc-roc score for old version :")
-        pixel_auc_old = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl_old)
-        print(pixel_auc_old)
+        # Total pixel-level auc-roc score for only using likelihood
+        pixel_auc_likelihood = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl_likelihood)
+        # Total pixel-level auc-roc score for patchcore version
+        pixel_auc_patchcore = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl_patchcore)
 
-        print("Total image-level auc-roc score :")
+        # Total image-level auc-roc score
         img_auc = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl)
-        print(img_auc)
-        print("Total image-level auc-roc score for old version :")
-        img_auc_old = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl_old)
-        print(img_auc_old)
+        # Total image-level auc-roc score for only using likelihood
+        img_auc_likelihood = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl_likelihood)
+        # Total image-level auc-roc score for patchcore version
+        img_auc_patchcore = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl_patchcore)
 
-        print('test_epoch_end')
-        values = {'pixel_auc': pixel_auc, 'pixel_auc_old': pixel_auc_old, 'img_auc': img_auc, 'img_auc_old': img_auc_old}
+        values = {'pixel_auc': pixel_auc, 'pixel_auc_likelihood': pixel_auc_likelihood, 'pixel_auc_patchcore': pixel_auc_patchcore, \
+            'img_auc': img_auc, 'img_auc_likelihood': img_auc_likelihood, 'img_auc_patchcore': img_auc_patchcore}
         
         # if self.args.visualize_tsne:
         #     visualize_TSNE(self.viz_feature_list, self.viz_class_idx_list, os.path.join(self.logger.log_dir, "visualize_TSNE.png"))
@@ -512,7 +521,9 @@ class AC_Model(pl.LightningModule):
         self.log_dict(values)
         
         f = open(os.path.join(self.args.project_root_path, "score_result.csv"), "a")
-        data = [self.args.category, str(self.args.coreset_sampling_ratio), str(self.args.dist_coreset_size), str(self.args.dist_padding), str(self.args.prob_gamma), str(self.args.softmax_temperature), str(pixel_auc), str(pixel_auc_old), str(img_auc), str(img_auc_old)]
+        data = [self.args.category, str(self.args.coreset_sampling_ratio), str(self.args.dist_coreset_size), str(self.args.dist_padding), \
+            str(self.args.prob_gamma), str(self.args.softmax_temperature), str(pixel_auc), str(pixel_auc_likelihood), str(pixel_auc_patchcore), \
+                str(img_auc), str(img_auc_likelihood), str(img_auc_patchcore)]
         data = ','.join(data) + '\n'
         f.write(data)
         f.close()
