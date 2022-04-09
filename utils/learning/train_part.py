@@ -248,12 +248,12 @@ class Distribution(pl.LightningModule):
                 'train_loss': self.train_loss,
                 'val_loss': self.val_loss
             },
-            f=os.path.join(self.embedding_dir_path, 'model.pt')
+            f=os.path.join(self.embedding_dir_path, f'model_{self.args.dist_padding}_{self.args.dist_coreset_size}.pt')
         )
         
         if self.best_val_loss > self.val_loss :
             self.best_val_loss = self.val_loss
-            shutil.copyfile(os.path.join(self.embedding_dir_path, 'model.pt'), os.path.join(self.embedding_dir_path, 'best_model.pt'))
+            shutil.copyfile(os.path.join(self.embedding_dir_path, f'model_{self.args.dist_padding}_{self.args.dist_coreset_size}.pt'), os.path.join(self.embedding_dir_path, f'best_model_{self.args.dist_padding}_{self.args.dist_coreset_size}.pt'))
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.args.learning_rate)
@@ -309,7 +309,7 @@ class AC_Model(pl.LightningModule):
         
         self.dist_model = Distribution_Model(args, dist_input_size, dist_output_size)        
         self.embedding_dir_path = os.path.join('./', 'embeddings', self.args.category)
-        self.dist_model.load_state_dict(torch.load(os.path.join(self.embedding_dir_path, 'best_model.pt'))['model'])
+        self.dist_model.load_state_dict(torch.load(os.path.join(self.embedding_dir_path, f'best_model_{self.args.dist_padding}_{self.args.dist_coreset_size}.pt'))['model'])
 
     def init_results_list(self):
         self.gt_list_px_lvl = []
