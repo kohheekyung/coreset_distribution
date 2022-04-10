@@ -158,7 +158,7 @@ class Distribution_Dataset_Generator():
 
     def generate(self, dataloader):
         self.embedding_dir_path = os.path.join('./', f'embeddings_{self.args.block_index}', self.args.category)
-        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,'dist_coreset_index.faiss'))
+        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
         if torch.cuda.is_available():
             res = faiss.StandardGpuResources()
             self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.dist_coreset_index)

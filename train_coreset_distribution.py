@@ -30,7 +30,7 @@ def get_args():
     parser.add_argument('--num_epochs', type=int, default=20)
     parser.add_argument('--learning_rate', type=float, default=0.01)
     parser.add_argument('--step_size', type=int, default=10)
-    parser.add_argument('--dist_batch_size', type=int, default=32768)
+    parser.add_argument('--dist_batch_size', type=int, default=8192)
     parser.add_argument('--softmax_temperature', type=float, default=1.0)
     parser.add_argument('--prob_gamma', type=float, default=0.99)
     args = parser.parse_args()

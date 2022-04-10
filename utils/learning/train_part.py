@@ -181,11 +181,11 @@ class Coreset(pl.LightningModule):
         #faiss
         self.embedding_coreset_index = faiss.IndexFlatL2(self.embedding_coreset.shape[1])
         self.embedding_coreset_index.add(self.embedding_coreset)
-        faiss.write_index(self.embedding_coreset_index, os.path.join(self.embedding_dir_path,'embedding_coreset_index.faiss'))
+        faiss.write_index(self.embedding_coreset_index, os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.coreset_sampling_ratio*100)}.faiss'))
 
         self.dist_coreset_index = faiss.IndexFlatL2(self.dist_coreset.shape[1])
         self.dist_coreset_index.add(self.dist_coreset)
-        faiss.write_index(self.dist_coreset_index, os.path.join(self.embedding_dir_path,'dist_coreset_index.faiss'))
+        faiss.write_index(self.dist_coreset_index, os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
 
     def configure_optimizers(self):
         return None
@@ -359,8 +359,8 @@ class AC_Model(pl.LightningModule):
     def on_test_start(self):
         self.feature_model.eval() # to stop running_var move (maybe not critical)
         self.dist_model.eval() # to stop running_var move (maybe not critical)
-        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,'dist_coreset_index.faiss'))
-        self.embedding_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,'embedding_coreset_index.faiss'))
+        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
+        self.embedding_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.coreset_sampling_ratio*100)}.faiss'))
         if torch.cuda.is_available():
             res = faiss.StandardGpuResources()
             self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.dist_coreset_index)
