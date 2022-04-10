@@ -27,10 +27,10 @@ def get_args():
     # parser.add_argument('--whitening_offset', type=float, default=0.001)
     parser.add_argument('--dist_coreset_size', type=int, default=512) # 512
     parser.add_argument('--dist_padding', type=int, default=1)
-    parser.add_argument('--num_epochs', default=20)
-    parser.add_argument('--learning_rate', type=float, default=0.001)
+    parser.add_argument('--num_epochs', type=int, default=20)
+    parser.add_argument('--learning_rate', type=float, default=0.01)
     parser.add_argument('--step_size', type=int, default=10)
-    parser.add_argument('--dist_batch_size', default=16384)
+    parser.add_argument('--dist_batch_size', type=int, default=32768)
     parser.add_argument('--softmax_temperature', type=float, default=1.0)
     parser.add_argument('--prob_gamma', type=float, default=0.99)
     args = parser.parse_args()
@@ -57,7 +57,7 @@ if __name__ == '__main__':
     # train coreset distribution
     if args.phase == 'train' :
         tb_logger = TensorBoardLogger(save_dir=default_root_dir, name="distribution")
-        distribution_trainer = pl.Trainer.from_argparse_args(args, max_epochs=args.num_epochs, gpus=1, logger=tb_logger) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
+        distribution_trainer = pl.Trainer.from_argparse_args(args, max_epochs=args.num_epochs, gpus=1, logger=tb_logger, log_every_n_steps=10) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
         distribution_model = Distribution(args, dist_input_size, dist_output_size)
         distribution_trainer.fit(distribution_model, train_dataloaders=distribution_train_dataloader, val_dataloaders=distribution_val_dataloader)
 

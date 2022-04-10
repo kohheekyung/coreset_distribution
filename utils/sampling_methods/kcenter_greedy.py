@@ -1,123 +1,124 @@
-# Copyright 2017 Google Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""Returns points that minimizes the maximum distance of any point to a center.
-
-Implements the k-Center-Greedy method in
-Ozan Sener and Silvio Savarese.  A Geometric Approach to Active Learning for
-Convolutional Neural Networks. https://arxiv.org/abs/1708.00489 2017
-
-Distance metric defaults to l2 distance.  Features used to calculate distance
-are either raw features or if a model has transform method then uses the output
-of model.transform(X).
-
-Can be extended to a robust k centers algorithm that ignores a certain number of
-outlier datapoints.  Resulting centers are solution to multiple integer program.
+"""This module comprises PatchCore Sampling Methods for the embedding.
+- k Center Greedy Method
+    Returns points that minimizes the maximum distance of any point to a center.
+    . https://arxiv.org/abs/1708.00489
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+from typing import List, Optional
 
-import numpy as np
-from sklearn.metrics import pairwise_distances
-from utils.sampling_methods.sampling_def import SamplingMethod
+import torch
+import torch.nn.functional as F
+from torch import Tensor
+
+from sklearn.random_projection import SparseRandomProjection
 
 
-class kCenterGreedy(SamplingMethod):
-
-  def __init__(self, X, y, seed, metric='euclidean'):
-    self.X = X
-    self.y = y
-    self.flat_X = self.flatten_X()
-    self.name = 'kcenter'
-    self.features = self.flat_X
-    self.metric = metric
-    self.min_distances = None
-    self.n_obs = self.X.shape[0]
-    self.already_selected = []
-
-  def update_distances(self, cluster_centers, only_new=True, reset_dist=False):
-    """Update min distances given cluster centers.
-
+class kCenterGreedy:
+    """Implements k-center-greedy method.
     Args:
-      cluster_centers: indices of cluster centers
-      only_new: only calculate distance for newly selected points and update
-        min_distances.
-      rest_dist: whether to reset min_distances.
+        embedding (Tensor): Embedding vector extracted from a CNN
+        sampling_size (int): choose coreset size from the embedding size.
+    Example:
+        >>> embedding.shape
+        torch.Size([219520, 1536])
+        >>> sampler = KCenterGreedy(embedding=embedding, sampling_size=select_batch_size)
+        >>> sampled_idxs = sampler.select_coreset_idxs()
+        >>> coreset = embedding[sampled_idxs]
+        >>> coreset.shape
+        torch.Size([219, 1536])
     """
 
-    if reset_dist:
-      self.min_distances = None
-    if only_new:
-      cluster_centers = [d for d in cluster_centers
-                         if d not in self.already_selected]
-    if cluster_centers:
-      # Update min_distances for all examples given new cluster center.
-      x = self.features[cluster_centers]
-      dist = pairwise_distances(self.features, x, metric=self.metric)
+    def __init__(self, embedding: Tensor, sampling_size: int) -> None:
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.embedding = embedding
+        self.coreset_size = sampling_size
+        self.model = SparseRandomProjection(n_components='auto', eps=0.9) # 'auto' => Johnson-Lindenstrauss lemma
 
-      if self.min_distances is None:
-        self.min_distances = np.min(dist, axis=1).reshape(-1,1)
-      else:
-        self.min_distances = np.minimum(self.min_distances, dist)
+        self.features: Tensor
+        self.min_distances: Tensor = None
+        self.n_observations = self.embedding.shape[0]
 
-  def select_batch_(self, model, already_selected, N, **kwargs):
-    """
-    Diversity promoting active learning method that greedily forms a batch
-    to minimize the maximum distance to a cluster center among all unlabeled
-    datapoints.
+    def reset_distances(self) -> None:
+        """Reset minimum distances."""
+        self.min_distances = None
 
-    Args:
-      model: model with scikit-like API with decision_function implemented
-      already_selected: index of datapoints already selected
-      N: batch size
+    def update_distances(self, cluster_centers: List[int]) -> None:
+        """Update min distances given cluster centers.
+        Args:
+            cluster_centers (List[int]): indices of cluster centers
+        """
 
-    Returns:
-      indices of points selected to minimize distance to cluster centers
-    """
+        if cluster_centers:
+            centers = self.features[cluster_centers]
 
-    try:
-      # Assumes that the transform function takes in original data and not
-      # flattened data.
-      print('Getting transformed features...')
-      self.features = model.transform(self.X)
-      print('Calculating distances...')
-      self.update_distances(already_selected, only_new=False, reset_dist=True)
-    except:
-      print('Using flat_X as features.')
-      self.update_distances(already_selected, only_new=True, reset_dist=False)
+            distance = F.pairwise_distance(self.features, centers, p=2).reshape(-1, 1)
 
-    new_batch = []
+            if self.min_distances is None:
+                self.min_distances = distance
+            else:
+                self.min_distances = torch.minimum(self.min_distances, distance)
 
-    for _ in range(N):
-      if self.already_selected is None:
-        # Initialize centers with a randomly selected datapoint
-        ind = np.random.choice(np.arange(self.n_obs))
-      else:
-        ind = np.argmax(self.min_distances)
-      # New examples should not be in already selected since those points
-      # should have min_distance of zero to a cluster center.
-      assert ind not in already_selected
+    def get_new_idx(self) -> int:
+        """Get index value of a sample.
+        Based on minimum distance of the cluster
+        Returns:
+            int: Sample index
+        """
 
-      self.update_distances([ind], only_new=True, reset_dist=False)
-      new_batch.append(ind)
-    print('Maximum distance from cluster centers is %0.2f'
-            % max(self.min_distances))
+        if isinstance(self.min_distances, Tensor):
+            idx = int(torch.argmax(self.min_distances).item())
+        else:
+            raise ValueError(f"self.min_distances must be of type Tensor. Got {type(self.min_distances)}")
 
+        return idx
 
-    self.already_selected = already_selected
+    def select_coreset_idxs(self, selected_idxs: Optional[List[int]] = None) -> List[int]:
+        """Greedily form a coreset to minimize the maximum distance of a cluster.
+        Args:
+            selected_idxs: index of samples already selected. Defaults to an empty set.
+        Returns:
+          indices of samples selected to minimize distance to cluster centers
+        """
 
-    return new_batch
+        if selected_idxs is None:
+            selected_idxs = []
 
+        if self.embedding.ndim == 2:
+            self.model.fit(self.embedding)
+            self.features = torch.Tensor(self.model.transform(self.embedding)).to(self.device)
+            self.reset_distances()
+        else:
+            self.features = self.embedding.reshape(self.embedding.shape[0], -1).to(self.device)
+            self.update_distances(cluster_centers=selected_idxs)
+
+        selected_coreset_idxs: List[int] = []
+        idx = int(torch.randint(high=self.n_observations, size=(1,)).item())
+        for _ in range(self.coreset_size):
+            self.update_distances(cluster_centers=[idx])
+            idx = self.get_new_idx()
+            if idx in selected_idxs:
+                raise ValueError("New indices should not be in selected indices.")
+            self.min_distances[idx] = 0
+            selected_coreset_idxs.append(idx)
+
+        return selected_coreset_idxs
+
+    def sample_coreset(self, selected_idxs: Optional[List[int]] = None) -> Tensor:
+        """Select coreset from the embedding.
+        Args:
+            selected_idxs: index of samples already selected. Defaults to an empty set.
+        Returns:
+            Tensor: Output coreset
+        Example:
+            >>> embedding.shape
+            torch.Size([219520, 1536])
+            >>> sampler = KCenterGreedy(...)
+            >>> coreset = sampler.sample_coreset()
+            >>> coreset.shape
+            torch.Size([219, 1536])
+        """
+
+        idxs = self.select_coreset_idxs(selected_idxs)
+        coreset = self.embedding[idxs]
+
+        return coreset

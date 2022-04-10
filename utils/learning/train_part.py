@@ -166,8 +166,8 @@ class Coreset(pl.LightningModule):
         dist_coreset_size = self.args.dist_coreset_size
         select_batch_size = max(embedding_coreset_size, dist_coreset_size)
 
-        selector = kCenterGreedy(total_embeddings, 0, 0)
-        selected_idx = selector.select_batch(model=self.randomprojector, already_selected=[], N=select_batch_size)
+        selector = kCenterGreedy(embedding=torch.Tensor(total_embeddings), sampling_size=select_batch_size)
+        selected_idx = selector.select_coreset_idxs()
         self.embedding_coreset = total_embeddings[selected_idx][:embedding_coreset_size]
         self.dist_coreset = total_embeddings[selected_idx][:dist_coreset_size]
 
