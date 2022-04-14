@@ -134,7 +134,7 @@ class Distribution_Dataset_Generator():
         self.feature_model.eval()
 
         self.embedding_list = []
-        self.embedding_indices_list = []
+        # self.embedding_indices_list = []
 
     def init_features(self):
         self.features = []
@@ -158,10 +158,10 @@ class Distribution_Dataset_Generator():
 
     def generate(self, dataloader):
         self.embedding_dir_path = os.path.join('./', f'embeddings_{self.args.block_index}', self.args.category)
-        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
-        if torch.cuda.is_available():
-            res = faiss.StandardGpuResources()
-            self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.dist_coreset_index)
+        # self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
+        # if torch.cuda.is_available():
+        #     res = faiss.StandardGpuResources()
+        #     self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.dist_coreset_index)
 
         for iter, batch in enumerate(dataloader):
             x, _, _, _, _ = batch
@@ -178,44 +178,46 @@ class Distribution_Dataset_Generator():
                 embedding_ = np.array(features[0].cpu())
 
             # find index of embedding vector which is closest to self.dist_coreset_index
-            embedding_t = embedding_.transpose(0,2,3,1) # N x W x H x E
-            embedding_list = embedding_t.reshape(-1, embedding_t.shape[-1]) # (N x W x H) x E
+            # embedding_t = embedding_.transpose(0,2,3,1) # N x W x H x E
+            # embedding_list = embedding_t.reshape(-1, embedding_t.shape[-1]) # (N x W x H) x E
 
-            _, embedding_indices = self.dist_coreset_index.search(embedding_list, k=1) # (N x W x H) x 1
-            embedding_indices = embedding_indices.reshape(embedding_t.shape[0:3] + (1,)).transpose(0,3,1,2) # N x 1 x W x H
+            # _, embedding_indices = self.dist_coreset_index.search(embedding_list, k=1) # (N x W x H) x 1
+            # embedding_indices = embedding_indices.reshape(embedding_t.shape[0:3] + (1,)).transpose(0,3,1,2) # N x 1 x W x H
 
-            embedding_list_, embedding_indices_list_ = self.make_embedding_list(embedding_, embedding_indices)
-            self.embedding_list.extend(embedding_list_)
-            self.embedding_indices_list.extend(embedding_indices_list_)
+            # embedding_list_, embedding_indices_list_ = self.make_embedding_list(embedding_, embedding_indices)
+            for k in range(embedding_.shape[0]):
+                self.embedding_list.append(embedding_[k])
+            # self.embedding_list.extend(embedding_list_)
+            # self.embedding_indices_list.extend(embedding_indices_list_)
             
     def get_data_size(self):
-        input_size = self.dist_coreset_index.reconstruct(0).shape[0] * (pow(self.padding*2 + 1, 2) - 1)
-        output_size = self.dist_coreset_index.ntotal
+        input_size = self.embedding_list[0].shape[0] * (pow(self.padding*2 + 1, 2) - 1)
+        output_size = self.embedding_list[0].shape[0]
         return input_size, output_size
 
     def __len__(self):
-        return len(self.embedding_indices_list) * np.prod(self.embedding_indices_list[0].shape[1:])
+        return len(self.embedding_list) * np.prod(self.embedding_list[0].shape[1:])
 
     def __getitem__(self, idx):
-        len_list, len_i, len_j = len(self.embedding_indices_list), self.embedding_indices_list[0].shape[1], self.embedding_indices_list[0].shape[2]
+        len_list, len_i, len_j = len(self.embedding_list), self.embedding_list[0].shape[1], self.embedding_list[0].shape[2]
 
         idx, j_idx = idx // len_j, idx % len_j
         list_idx, i_idx = idx // len_i, idx % len_i
 
         embedding = self.embedding_list[list_idx] # E x W x H
-        embedding_indices = self.embedding_indices_list[list_idx] # 1 x W x H
+        # embedding_indices = self.embedding_indices_list[list_idx] # 1 x W x H
         
         pad_width = ((0,),(self.padding,),(self.padding,))
         embedding_pad = np.pad(embedding, pad_width, "constant") # E x (W+1) x (H+1)
 
-        index = embedding_indices[0, i_idx, j_idx]
+        # index = embedding_indices[0, i_idx, j_idx]
         neighbor = np.zeros(shape=(0,))
         for di in range(-self.padding, self.padding+1) :
             for dj in range(-self.padding, self.padding+1) :
                 if di == 0 and dj == 0 :
                     continue
                 neighbor = np.concatenate((neighbor, embedding_pad[:, i_idx+di+self.padding, j_idx+dj+self.padding]))
-        return neighbor.astype(np.float32), index
+        return neighbor.astype(np.float32), embedding[:,i_idx, j_idx].astype(np.float32)
     
 def Distribution_Train_Dataloader(args, dataloader):
     distribution_dataset_generator = Distribution_Dataset_Generator(args)
