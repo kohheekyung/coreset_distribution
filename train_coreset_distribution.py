@@ -11,7 +11,7 @@ def get_args():
     parser.add_argument('--phase', choices=['train','test'], default='train')
     parser.add_argument('--dataset_path', default='../dataset/MVTecAD') # ./MVTec
     parser.add_argument('--category', default='hazelnut')
-    parser.add_argument('--batch_size', default=256)
+    parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--num_workers', default=4) # 0
     parser.add_argument('--load_size', default=256) # 256
     parser.add_argument('--input_size', default=224)
@@ -22,15 +22,14 @@ def get_args():
     parser.add_argument('--n_neighbors', type=int, default=9)
     parser.add_argument('--feature_model', choices=['WR50', 'R50', 'R34', 'R18', 'R101', 'R152'], default='WR50')
     parser.add_argument('--block_index', choices=['1+2', '2+3', '3+4', '4', '5'], default='2+3') # '2+3' means using both block 2 and block 3
-    # parser.add_argument('--visualize_tsne', default=False, action='store_true', help='Whether to visualize t-SNE projection')
-    # parser.add_argument('--dist_coreset_size', type=int, default=512) # 512
+    parser.add_argument('--dist_coreset_size', type=int, default=2048) # 512
     parser.add_argument('--dist_padding', type=int, default=1)
     parser.add_argument('--num_epochs', type=int, default=10)
     parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--step_size', type=int, default=5)
     parser.add_argument('--dist_batch_size', type=int, default=512)
-    # parser.add_argument('--softmax_temperature', type=float, default=1.0)
-    # parser.add_argument('--prob_gamma', type=float, default=0.99)
+    parser.add_argument('--softmax_temperature', type=float, default=1.0)
+    parser.add_argument('--prob_gamma', type=float, default=0.99)
     args = parser.parse_args()
     return args
 
@@ -55,7 +54,7 @@ if __name__ == '__main__':
     # train coreset distribution
     if args.phase == 'train' :
         tb_logger = TensorBoardLogger(save_dir=default_root_dir, name="distribution")
-        distribution_trainer = pl.Trainer.from_argparse_args(args, max_epochs=args.num_epochs, gpus=1, logger=tb_logger, log_every_n_steps=10, enable_checkpointing=False) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
+        distribution_trainer = pl.Trainer.from_argparse_args(args, max_epochs=args.num_epochs, gpus=1, logger=tb_logger, log_every_n_steps=50, enable_checkpointing=False) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
         distribution_model = Distribution(args, dist_input_size, dist_output_size)
         distribution_trainer.fit(distribution_model, train_dataloaders=distribution_train_dataloader, val_dataloaders=distribution_val_dataloader)
 
