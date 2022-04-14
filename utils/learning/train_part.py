@@ -170,11 +170,7 @@ class Coreset(pl.LightningModule):
         selected_idx = selector.select_coreset_idxs()
         self.embedding_coreset = total_embeddings[selected_idx][:embedding_coreset_size]
         self.dist_coreset = total_embeddings[selected_idx][:dist_coreset_size]
-
-        # if self.args.whitening : 
-        #     self.embedding_mean, self.embedding_std = np.mean(self.embedding_coreset, axis=0), np.std(self.embedding_coreset, axis=0)
-        #     self.embedding_coreset = (self.embedding_coreset - self.embedding_mean.reshape(1, -1)) / (self.args.whitening_offset + self.embedding_std.reshape(1, -1))
-        
+                
         print('initial embedding size : ', total_embeddings.shape)
         print('final embedding size : ', self.embedding_coreset.shape)
         
@@ -322,8 +318,6 @@ class AC_Model(pl.LightningModule):
         self.pred_list_img_lvl_patchcore = []
         self.img_path_list = []
         self.img_type_list = []
-        # self.viz_feature_list = []
-        # self.viz_class_idx_list = []
 
     def init_features(self):
         self.features = []
@@ -399,10 +393,6 @@ class AC_Model(pl.LightningModule):
                             continue
                         neighbor = np.concatenate((neighbor, embedding_pad[:, i_idx+di+self.args.dist_padding, j_idx+dj+self.args.dist_padding]))
                 neighbors[i_idx, j_idx] = neighbor                   
-            
-        # if self.args.visualize_tsne :
-        #     self.viz_feature_list += [embedding_test[idx] for idx in range(embedding_test.shape[0])]
-        #     self.viz_class_idx_list += [label.cpu().numpy()[0]] * embedding_test.shape[0]
                 
         embedding_score, embedding_indices = self.embedding_coreset_index.search(embedding_test, k=self.args.n_neighbors) # (W x H) x self.args.n_neighbors
         embedding_score = np.sqrt(embedding_score)
@@ -415,9 +405,6 @@ class AC_Model(pl.LightningModule):
         
         neighbor_index = faiss.IndexFlatL2(embedding_test.shape[1])
         neighbor_index.add(neighbors_macf_recons.squeeze(0))
-        
-        # for i in range(self.args.n_neighbors) :
-        #     neighbor_index.add(self.embedding_coreset_index.reconstruct(neighbors_macf_indices[0, i].item()).reshape(1, -1))
         
         neighbor_distances, _ = neighbor_index.search(max_anomaly_feature.reshape(1, -1), k=self.args.n_neighbors)
         neighbor_distances = np.sqrt(neighbor_distances)
@@ -433,23 +420,20 @@ class AC_Model(pl.LightningModule):
         # calc anomaly pixel score
         neighbors = neighbors.reshape(-1, neighbors.shape[2]).astype(np.float32) # (W x H) x NE
         y_hat = self.dist_model(torch.tensor(neighbors).cuda()).cpu() # (W x H) x self.dist_coreset_index.ntotal
-        anomaly_pxl_likelihood = np.zeros(shape=(neighbors.shape[0])) # (W x H)
-
-        distances, indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
-        distances = np.sqrt(distances)
-        prob_embedding = calc_prob_embedding(distances, gamma=self.args.prob_gamma)
-
+        
+        topk_size = 1
+        
+        topk_prob, topk_prob_index = torch.topk(y_hat, k=topk_size, dim=-1)
+        dist_test_neighbors = np.zeros(shape=(neighbors.shape[0], topk_size)) # (W x H)
+        
         for i in range(neighbors.shape[0]) :
-            # if indices[i, 0] != torch.argmax(y_hat[i]) and x_type == 'good':
-            #     breakpoint()
-
-            softmax = F.softmax(y_hat[i] / self.args.softmax_temperature).cpu().numpy()
-            for k in range(self.dist_coreset_index.ntotal) :
-                anomaly_pxl_likelihood[i] += prob_embedding[i, k] * softmax[indices[i, k]]
+            for j in range(topk_size) :
+                neighbor_feature = self.dist_coreset_index.reconstruct(topk_prob_index[i, j].item())
+                dist_test_neighbors[i, j] = np.sqrt(np.sum((neighbor_feature - embedding_test[i]) ** 2))
 
         # negative log likelihood
-        anomaly_pxl_score_likelihood = -np.log(anomaly_pxl_likelihood)
-        anomaly_pxl_score = -np.log(calc_prob_embedding(embedding_score[:, 0], gamma=self.args.prob_gamma) * anomaly_pxl_likelihood)
+        anomaly_pxl_score_likelihood = embedding_score[:, 0] + np.min(dist_test_neighbors, axis=1)
+        anomaly_pxl_score = np.min(dist_test_neighbors, axis=1)
 
         anomaly_img_score = np.max(anomaly_pxl_score)
         anomaly_img_score_likelihood = np.max(anomaly_pxl_score_likelihood)
@@ -522,7 +506,7 @@ class AC_Model(pl.LightningModule):
         
         f = open(os.path.join(self.args.project_root_path, "score_result.csv"), "a")
         data = [self.args.category, str(self.args.coreset_sampling_ratio), str(self.args.dist_coreset_size), str(self.args.dist_padding), \
-            str(self.args.prob_gamma), str(self.args.softmax_temperature), str(pixel_auc), str(pixel_auc_likelihood), str(pixel_auc_patchcore), \
+                str(pixel_auc), str(pixel_auc_likelihood), str(pixel_auc_patchcore), \
                 str(img_auc), str(img_auc_likelihood), str(img_auc_patchcore)]
         data = ','.join(data) + '\n'
         f.write(data)
