@@ -11,7 +11,7 @@ def get_args():
     parser.add_argument('--phase', choices=['train','test'], default='train')
     parser.add_argument('--dataset_path', default='../dataset/MVTecAD') # ./MVTec
     parser.add_argument('--category', default='hazelnut')
-    parser.add_argument('--batch_size', default=256)
+    parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--num_workers', default=4) # 0
     parser.add_argument('--load_size', default=256) # 256
     parser.add_argument('--input_size', default=224)
