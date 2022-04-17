@@ -163,10 +163,10 @@ class Coreset(pl.LightningModule):
         
         # Coreset Subsampling
         embedding_coreset_size = int(self.args.coreset_sampling_ratio * total_embeddings.shape[0])
-        # dist_coreset_size = self.args.dist_coreset_size
-        # select_batch_size = max(embedding_coreset_size, dist_coreset_size)
+        dist_coreset_size = self.args.dist_coreset_size
+        select_batch_size = max(embedding_coreset_size, dist_coreset_size)
 
-        selector = kCenterGreedy(embedding=torch.Tensor(total_embeddings), sampling_size=embedding_coreset_size)
+        selector = kCenterGreedy(embedding=torch.Tensor(total_embeddings), sampling_size=select_batch_size)
         selected_idx = selector.select_coreset_idxs()
         self.embedding_coreset = total_embeddings[selected_idx][:embedding_coreset_size]
         self.dist_coreset = total_embeddings[selected_idx][:dist_coreset_size]
@@ -179,9 +179,9 @@ class Coreset(pl.LightningModule):
         self.embedding_coreset_index.add(self.embedding_coreset)
         faiss.write_index(self.embedding_coreset_index, os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.coreset_sampling_ratio*100)}.faiss'))
 
-        # self.dist_coreset_index = faiss.IndexFlatL2(self.dist_coreset.shape[1])
-        # self.dist_coreset_index.add(self.dist_coreset)
-        # faiss.write_index(self.dist_coreset_index, os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
+        self.dist_coreset_index = faiss.IndexFlatL2(self.dist_coreset.shape[1])
+        self.dist_coreset_index.add(self.dist_coreset)
+        faiss.write_index(self.dist_coreset_index, os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
 
     def configure_optimizers(self):
         return None
@@ -212,7 +212,7 @@ class Distribution(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self(x)
-        loss = F.mse_loss(y_hat, y)
+        loss = F.cross_entropy(y_hat, y)
         self.log('train_loss', loss, prog_bar=True)
         self.train_loss += loss * x.shape[0]
         self.train_size += x.shape[0]
@@ -228,7 +228,7 @@ class Distribution(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self(x)
-        loss = F.mse_loss(y_hat, y)
+        loss = F.cross_entropy(y_hat, y)
         self.log('valid_loss', loss, prog_bar=True)
         self.val_loss += loss * x.shape[0]
         self.val_size += x.shape[0]
@@ -244,12 +244,12 @@ class Distribution(pl.LightningModule):
                 'train_loss': self.train_loss,
                 'val_loss': self.val_loss
             },
-            f=os.path.join(self.embedding_dir_path, f'model_dp{self.args.dist_padding}.pt')
+            f=os.path.join(self.embedding_dir_path, f'model_{self.args.dist_padding}_{self.args.dist_coreset_size}.pt')
         )
         
         if self.best_val_loss > self.val_loss :
             self.best_val_loss = self.val_loss
-            shutil.copyfile(os.path.join(self.embedding_dir_path, f'model_dp{self.args.dist_padding}.pt'), os.path.join(self.embedding_dir_path, f'best_model_dp{self.args.dist_padding}.pt'))
+            shutil.copyfile(os.path.join(self.embedding_dir_path, f'model_{self.args.dist_padding}_{self.args.dist_coreset_size}.pt'), os.path.join(self.embedding_dir_path, f'best_model_{self.args.dist_padding}_{self.args.dist_coreset_size}.pt'))
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.args.learning_rate)
@@ -305,7 +305,7 @@ class AC_Model(pl.LightningModule):
         
         self.dist_model = Distribution_Model(args, dist_input_size, dist_output_size)        
         self.embedding_dir_path = os.path.join('./', f'embeddings_{self.args.block_index}', self.args.category)
-        self.dist_model.load_state_dict(torch.load(os.path.join(self.embedding_dir_path, f'best_model_dp{self.args.dist_padding}.pt'))['model'])
+        self.dist_model.load_state_dict(torch.load(os.path.join(self.embedding_dir_path, f'best_model_{self.args.dist_padding}_{self.args.dist_coreset_size}.pt'))['model'])
 
     def init_results_list(self):
         self.gt_list_px_lvl = []
@@ -353,11 +353,11 @@ class AC_Model(pl.LightningModule):
     def on_test_start(self):
         self.feature_model.eval() # to stop running_var move (maybe not critical)
         self.dist_model.eval() # to stop running_var move (maybe not critical)
-        # self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
+        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
         self.embedding_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.coreset_sampling_ratio*100)}.faiss'))
         if torch.cuda.is_available():
             res = faiss.StandardGpuResources()
-            # self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.dist_coreset_index)
+            self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.dist_coreset_index)
             self.embedding_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.embedding_coreset_index)
         self.init_results_list()
         self.embedding_dir_path, self.sample_path, self.source_code_save_path = prep_dirs(self.logger.log_dir, self.args)
@@ -394,7 +394,7 @@ class AC_Model(pl.LightningModule):
                         neighbor = np.concatenate((neighbor, embedding_pad[:, i_idx+di+self.args.dist_padding, j_idx+dj+self.args.dist_padding]))
                 neighbors[i_idx, j_idx] = neighbor                   
                 
-        embedding_score, embedding_indices, embedding_recons = self.embedding_coreset_index.search_and_reconstruct(embedding_test, k=self.args.n_neighbors) # (W x H) x self.args.n_neighbors
+        embedding_score, embedding_indices = self.embedding_coreset_index.search(embedding_test, k=self.args.n_neighbors) # (W x H) x self.args.n_neighbors
         embedding_score = np.sqrt(embedding_score)
         
         max_anomaly_idx = np.argmax(embedding_score[:, 0])
