@@ -392,7 +392,7 @@ class AC_Model(pl.LightningModule):
                         if di == 0 and dj == 0 :
                             continue
                         neighbor = np.concatenate((neighbor, embedding_pad[:, i_idx+di+self.args.dist_padding, j_idx+dj+self.args.dist_padding]))
-                neighbors[i_idx, j_idx] = neighbor                   
+                neighbors[i_idx, j_idx] = neighbor
                 
         embedding_score, embedding_indices = self.embedding_coreset_index.search(embedding_test, k=self.args.n_neighbors) # (W x H) x self.args.n_neighbors
         embedding_score = np.sqrt(embedding_score)
@@ -420,20 +420,42 @@ class AC_Model(pl.LightningModule):
         # calc anomaly pixel score
         neighbors = neighbors.reshape(-1, neighbors.shape[2]).astype(np.float32) # (W x H) x NE
         y_hat = self.dist_model(torch.tensor(neighbors).cuda()).cpu() # (W x H) x self.dist_coreset_index.ntotal
-        
-        topk_size = 9
-        
-        topk_prob, topk_prob_index = torch.topk(y_hat, k=topk_size, dim=-1)
-        dist_test_neighbors = np.zeros(shape=(neighbors.shape[0], topk_size)) # (W x H)
-        
-        for i in range(neighbors.shape[0]) :
-            for j in range(topk_size) :
-                neighbor_feature = self.dist_coreset_index.reconstruct(topk_prob_index[i, j].item())
-                dist_test_neighbors[i, j] = np.sqrt(np.sum((neighbor_feature - embedding_test[i]) ** 2))
+        anomaly_pxl_likelihood = np.zeros(shape=(neighbors.shape[0])) # (W x H)
+        anomaly_pxl_topk1 = np.zeros(shape=(neighbors.shape[0])) # (W x H)
 
-        # negative log likelihood
-        anomaly_pxl_score_topk1 = dist_test_neighbors[:, 0]
-        anomaly_pxl_score = np.min(dist_test_neighbors, axis=1)
+        softmax_temp = F.softmax(y_hat / self.args.softmax_temperature, dim = -1).cpu().numpy()
+        softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > (1.0 / self.dist_coreset_index.ntotal) # threshold of softmax
+
+        distances, indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
+        distances = np.sqrt(distances)
+        prob_embedding = calc_prob_embedding(distances, gamma=self.args.prob_gamma)
+
+        for i in range(neighbors.shape[0]) :
+            # softmax_temp = F.softmax(y_hat[i] / self.args.softmax_temperature).cpu().numpy()
+            # softmax_thres = F.softmax(y_hat[i]).cpu().numpy() > 1/2048
+            for k in range(self.dist_coreset_index.ntotal) :
+                anomaly_pxl_likelihood[i] += prob_embedding[i, k] * softmax_temp[i, indices[i, k]]
+                # anomaly_pxl_topk1[i] = max(anomaly_pxl_topk1[i], prob_embedding[i, k])
+                if softmax_thres[i, indices[i, k]] == True :
+                #   anomaly_pxl_likelihood[i] += prob_embedding[i, k] * softmax_temp[i, indices[i, k]]
+                    anomaly_pxl_topk1[i] = max(anomaly_pxl_topk1[i], prob_embedding[i, k])
+
+        anomaly_pxl_score = -np.log(anomaly_pxl_likelihood)
+        anomaly_pxl_score_topk1 = -np.log(anomaly_pxl_topk1)
+ 
+        # topk_size = 9
+        
+        # topk_prob, topk_prob_index = torch.topk(y_hat, k=topk_size, dim=-1)
+        # dist_test_neighbors = np.zeros(shape=(neighbors.shape[0], topk_size)) # (W x H)
+        
+        # for i in range(neighbors.shape[0]) :
+        #     for j in range(topk_size) :
+        #         neighbor_feature = self.dist_coreset_index.reconstruct(topk_prob_index[i, j].item())
+        #         dist_test_neighbors[i, j] = np.sqrt(np.sum((neighbor_feature - embedding_test[i]) ** 2))
+
+        # # negative log likelihood
+        # anomaly_pxl_score_topk1 = dist_test_neighbors[:, 0]
+        # anomaly_pxl_score = np.min(dist_test_neighbors, axis=1)
 
         anomaly_img_score = np.max(anomaly_pxl_score)
         anomaly_img_score_topk1 = np.max(anomaly_pxl_score_topk1)
@@ -506,6 +528,7 @@ class AC_Model(pl.LightningModule):
         
         f = open(os.path.join(self.args.project_root_path, "score_result.csv"), "a")
         data = [self.args.category, str(self.args.coreset_sampling_ratio), str(self.args.dist_coreset_size), str(self.args.dist_padding), \
+                str(self.args.softmax_temperature), str(self.args.prob_gamma), \
                 str(pixel_auc), str(pixel_auc_topk1), str(pixel_auc_patchcore), \
                 str(img_auc), str(img_auc_topk1), str(img_auc_patchcore)]
         data = ','.join(data) + '\n'
