@@ -16,7 +16,6 @@ def Transform(load_size, input_size) :
     transform = transforms.Compose([
                         transforms.Resize((load_size, load_size), Image.ANTIALIAS),
                         transforms.ToTensor(),
-                        transforms.CenterCrop(input_size),
                         transforms.Normalize(mean=mean_train,
                                             std=std_train),
                         transforms.FiveCrop(input_size),
