@@ -58,16 +58,16 @@ class MVTecDataset(Dataset):
     def __getitem__(self, idx):
         img_path, gt, label, img_type = self.img_paths[idx], self.gt_paths[idx], self.labels[idx], self.types[idx]
         img = Image.open(img_path).convert('RGB')
-        img = self.transform(img)
+        img_fivecrop = self.transform(img)
         if gt == 0:
-            gt = torch.zeros([1, img.size()[-2], img.size()[-2]])
+            gt = torch.zeros([1, img_fivecrop.size()[-2], img_fivecrop.size()[-1]])
         else:
             gt = Image.open(gt)
             gt = self.gt_transform(gt)
         
-        assert img.size()[1:] == gt.size()[1:], "image.size != gt.size !!!"
+        assert img_fivecrop.size()[-2:] == gt.size()[1:], "image.size != gt.size !!!"
 
-        return img, gt, label, os.path.basename(img_path[:-4]), img_type
+        return img_fivecrop, gt, label, os.path.basename(img_path[:-4]), img_type
 
 def Train_Dataloader(args):
     data_transforms = Transform(args.load_size, args.input_size)
@@ -164,25 +164,26 @@ class Distribution_Dataset_Generator():
             self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.dist_coreset_index)
 
         for iter, batch in enumerate(dataloader):
-            x, _, _, _, _ = batch
-            x = x.to(self.device)
-            features = self.forward(x)
+            img_fivecrop, _, _, _, _ = batch
+            img_fivecrop = img_fivecrop.to(self.device)
+            bs, ncrops, c, w, h = img_fivecrop.shape
+            features = self.forward(img_fivecrop.view(-1, c, w, h))
             
             if '+' in self.args.block_index : 
                 embeddings = []
                 m = torch.nn.AvgPool2d(3, 1, 1)
                 for feature in features:
                     embeddings.append(m(feature))
-                embedding_ = np.array(embedding_concat(embeddings[0], embeddings[1])) # N x E x W x H
+                embedding_ = np.array(embedding_concat(embeddings[0], embeddings[1])) # (N x ncrops) x E x W x H
             else :
                 embedding_ = np.array(features[0].cpu())
 
             # find index of embedding vector which is closest to self.dist_coreset_index
-            embedding_t = embedding_.transpose(0,2,3,1) # N x W x H x E
-            embedding_list = embedding_t.reshape(-1, embedding_t.shape[-1]) # (N x W x H) x E
+            embedding_t = embedding_.transpose(0,2,3,1) # (N x ncrops) x W x H x E
+            embedding_list = embedding_t.reshape(-1, embedding_t.shape[-1]) # (N x ncrops x W x H) x E
 
-            _, embedding_indices = self.dist_coreset_index.search(embedding_list, k=1) # (N x W x H) x 1
-            embedding_indices = embedding_indices.reshape(embedding_t.shape[0:3] + (1,)).transpose(0,3,1,2) # N x 1 x W x H
+            _, embedding_indices = self.dist_coreset_index.search(embedding_list, k=1) # (N x ncrops x W x H) x 1
+            embedding_indices = embedding_indices.reshape(embedding_t.shape[0:3] + (1,)).transpose(0,3,1,2) # (N x ncrops) x 1 x W x H
 
             embedding_list_, embedding_indices_list_ = self.make_embedding_list(embedding_, embedding_indices)
             self.embedding_list.extend(embedding_list_)
