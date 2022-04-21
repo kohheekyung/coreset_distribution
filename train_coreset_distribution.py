@@ -26,7 +26,7 @@ def get_args():
     parser.add_argument('--dist_padding', type=int, default=1)
     parser.add_argument('--num_epochs', type=int, default=8)
     parser.add_argument('--learning_rate', type=float, default=0.001)
-    parser.add_argument('--step_size', type=int, default=3)
+    parser.add_argument('--step_size', type=int, default=4)
     parser.add_argument('--dist_batch_size', type=int, default=512)
     parser.add_argument('--softmax_temperature', type=float, default=1.0)
     parser.add_argument('--prob_gamma', type=float, default=0.99)

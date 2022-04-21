@@ -13,8 +13,14 @@ def Transform(load_size, input_size) :
         load_size (int): Resize shape
         input_size (int): CenterCrop shape
     """
+    # transform = transforms.Compose([
+    #                     transforms.Resize((load_size, load_size), Image.ANTIALIAS),
+    #                     transforms.ToTensor(),
+    #                     transforms.CenterCrop(input_size),
+    #                     transforms.Normalize(mean=mean_train,
+    #                                         std=std_train)])
     transform = transforms.Compose([
-                        transforms.Resize((load_size, load_size), Image.ANTIALIAS),
+                        transforms.Resize((input_size, input_size), Image.ANTIALIAS),
                         transforms.ToTensor(),
                         transforms.Normalize(mean=mean_train,
                                             std=std_train),
@@ -30,10 +36,13 @@ def GT_Transform(load_size, input_size) :
         load_size (int): Resize shape
         input_size (int): CenterCrop shape
     """
+    # transform = transforms.Compose([
+    #                     transforms.Resize((load_size, load_size)),
+    #                     transforms.ToTensor(),
+    #                     transforms.CenterCrop(input_size)])
     transform = transforms.Compose([
-                        transforms.Resize((load_size, load_size)),
-                        transforms.ToTensor(),
-                        transforms.CenterCrop(input_size)])
+                        transforms.Resize((input_size, input_size)),
+                        transforms.ToTensor()])
     return transform
 
 def INV_Normalize() :

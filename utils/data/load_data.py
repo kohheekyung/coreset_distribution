@@ -207,7 +207,7 @@ class Distribution_Dataset_Generator():
         embedding_indices = self.embedding_indices_list[list_idx] # 1 x W x H
         
         pad_width = ((0,),(self.padding,),(self.padding,))
-        embedding_pad = np.pad(embedding, pad_width, "constant") # E x (W+1) x (H+1)
+        embedding_pad = np.pad(embedding, pad_width, "reflect") # E x (W+1) x (H+1)
 
         index = embedding_indices[0, i_idx, j_idx]
         neighbor = np.zeros(shape=(0,))

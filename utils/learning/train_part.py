@@ -381,30 +381,22 @@ class AC_Model(pl.LightningModule):
         else :
             embedding_ = np.array(features[0].cpu())
         
-        embedding_score_list = []
-        # embedding_indices_list = []
-        # embedding_recons_list = []
-        anomaly_pxl_score_list = []
-        anomaly_pxl_score_topk1_list = []
-
-        embedding_test = np.array(reshape_embedding(embedding_)) # (ncrops x W x H) x E
-
-        pad_width = ((0,), (0,),(self.args.dist_padding,),(self.args.dist_padding,))
-        embedding_pad = np.pad(embedding_, pad_width, "constant") # ncrops x E x (W+1) x (H+1)
-        neighbors = np.zeros(shape=(embedding_.shape[0], embedding_.shape[2], embedding_.shape[3], embedding_.shape[1]*(pow(self.args.dist_padding*2+1, 2) - 1))) # ncrops x W x H x NE
-
-        for ncrop_idx in range(ncrops) :
-            for i_idx in range(embedding_.shape[2]) :
-                for j_idx in range(embedding_.shape[3]) :
-                    neighbor = np.zeros(shape=(0,))
-                    for di in range(-self.args.dist_padding, self.args.dist_padding+1) :
-                        for dj in range(-self.args.dist_padding, self.args.dist_padding+1) :
-                            if di == 0 and dj == 0 :
-                                continue
-                            neighbor = np.concatenate((neighbor, embedding_pad[ncrop_idx, :, i_idx+di+self.args.dist_padding, j_idx+dj+self.args.dist_padding]))
-                    neighbors[ncrop_idx, i_idx, j_idx] = neighbor
-
-        embedding_score, embedding_indices = self.embedding_coreset_index.search(embedding_test, k=self.args.n_neighbors) # (ncrops x W x H) x self.args.n_neighbors
+        embedding_ = embedding_.squeeze() # E x W x H
+        pad_width = ((0,),(self.args.dist_padding,),(self.args.dist_padding,))
+        embedding_pad = np.pad(embedding_, pad_width, "reflect") # E x (W+1) x (H+1)
+        neighbors = np.zeros(shape=(embedding_.shape[1], embedding_.shape[2], embedding_.shape[0]*(pow(self.args.dist_padding*2+1, 2) - 1))) # W x H x NE
+        # construct neighbor features
+        for i_idx in range(embedding_.shape[1]) :
+            for j_idx in range(embedding_.shape[2]) :
+                neighbor = np.zeros(shape=(0,))
+                for di in range(-self.args.dist_padding, self.args.dist_padding+1) :
+                    for dj in range(-self.args.dist_padding, self.args.dist_padding+1) :
+                        if di == 0 and dj == 0 :
+                            continue
+                        neighbor = np.concatenate((neighbor, embedding_pad[:, i_idx+di+self.args.dist_padding, j_idx+dj+self.args.dist_padding]))
+                neighbors[i_idx, j_idx] = neighbor
+                
+        embedding_score, embedding_indices = self.embedding_coreset_index.search(embedding_test, k=self.args.n_neighbors) # (W x H) x self.args.n_neighbors
         embedding_score = np.sqrt(embedding_score)
 
         if self.args.block_index == '1+2':
@@ -419,89 +411,39 @@ class AC_Model(pl.LightningModule):
             reshape_size = (7,7)
 
         ## patchcore
-        W, H = embedding_.shape[2:]
-        embedding_score = embedding_score.reshape(ncrops, (W * H), -1) # ncrops x (W x H) x self.args.n_neighbors
-
-        embedding_score_center = embedding_score[-1] # (W x H) x self.args.n_neighbors
-        max_anomaly_idx = np.argmax(embedding_score_center[:, 0])
-        max_embedding_score = embedding_score_center[max_anomaly_idx, 0] # maximum embedding score
-        weights_from_code = 1 - 1 / np.sum(np.exp(embedding_score_center[max_anomaly_idx] - max_embedding_score))
+        max_anomaly_idx = np.argmax(embedding_score[:, 0])
+        max_embedding_score = embedding_score[max_anomaly_idx, 0] # maximum embedding score
+        weights_from_code = 1 - 1 / np.sum(np.exp(embedding_score[max_anomaly_idx] - max_embedding_score))
 
         anomaly_img_score_patchcore = weights_from_code * max_embedding_score # Image-level score
-        anomaly_map_patchcore = embedding_score_center[:,0].reshape(reshape_size)
+        anomaly_map_patchcore = embedding_score[:, 0].reshape(reshape_size)
 
         ## anomaly using neighbor distribution
-        fivecrop_margin = (self.args.load_size - self.args.input_size) // (self.args.input_size // embedding_.shape[2]) // 2 # (256 - 224) // (224 // 28) // 2 = 2
+        neighbors = neighbors.reshape(-1, neighbors.shape[2]).astype(np.float32) # (W x H) x NE
+        y_hat = self.dist_model(torch.tensor(neighbors).cuda()).cpu() # (W x H) x self.dist_coreset_index.ntotal
+        anomaly_pxl_likelihood = np.zeros(shape=(neighbors.shape[0])) # (W x H)
+        anomaly_pxl_topk1 = np.zeros(shape=(neighbors.shape[0])) # (W x H)
 
-        neighbors = neighbors.reshape(-1, neighbors.shape[3]).astype(np.float32) # (ncrops x W x H) x NE
-        y_hat = self.dist_model(torch.tensor(neighbors).cuda()).cpu() # (ncrops x W x H) x self.dist_coreset_index.ntotal
-        anomaly_pxl_likelihood = np.zeros(shape=(ncrops, W * H)) # ncrops x (W x H)
-        # anomaly_pxl_topk1 = np.zeros(shape=(ncrops, W * H)) # ncrops x (W x H)
+        softmax_temp = F.softmax(y_hat / self.args.softmax_temperature, dim = -1).cpu().numpy() # (W x H) x self.dist_coreset_indesx.ntotal
+        # softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > (1.0 / self.dist_coreset_index.ntotal) # threshold of softmax
 
-        softmax_temp = F.softmax(y_hat / self.args.softmax_temperature, dim = -1).cpu().numpy() # (ncrops x W x H) x self.dist_coreset_index.ntotal
-        softmax_temp = softmax_temp.reshape((ncrops, (W * H), -1)) # ncrops x (W x H) x self.dist_coreset_index.ntotal
-        softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > (1.0 / self.dist_coreset_index.ntotal) # threshold of softmax
-        softmax_thres = softmax_thres.reshape((ncrops, (W * H), -1)) # ncrops x (W x H) x self.dist_coreset_index.ntotal
-
-        distances, indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (ncrops x W x H) x self.dist_coreset_index.ntotal
+        distances, indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
         distances = np.sqrt(distances)
-        prob_embedding = calc_prob_embedding(distances, gamma=self.args.prob_gamma) # (ncrops x W x H) x self.dist_coreset_index.ntotal
-        prob_embedding = prob_embedding.reshape((ncrops, (W * H), -1)) # ncrops x (W x H) x self.dist_coreset_index.ntotal
-        indices = indices.reshape((ncrops, (W * H), -1)) # ncrops x (W x H) x self.dist_coreset_index.ntotal
-        for crop_idx in range(ncrops) :
-            for i in range(W * H) :
-                for k in range(self.dist_coreset_index.ntotal) :
-                    anomaly_pxl_likelihood[crop_idx, i] += prob_embedding[crop_idx, i, k] * softmax_temp[crop_idx, i, indices[crop_idx, i, k]]
-                    # if softmax_thres[crop_idx, i, indices[crop_idx, i, k]] == True :
-                    #     anomaly_pxl_topk1[crop_idx, i] = max(anomaly_pxl_topk1[crop_idx, i], prob_embedding[crop_idx, i, k])
+        prob_embedding = calc_prob_embedding(distances, gamma=self.args.prob_gamma)
 
-        anomaly_pxl_score_total = -np.log(anomaly_pxl_likelihood).reshape((ncrops, W, H)) # ncrops x W x H
-        # anomaly_pxl_score_topk1_total = -np.log(anomaly_pxl_topk1).reshape((ncrops, W, H)) # ncrops x W x H
+        for i in range(neighbors.shape[0]) :
+            for k in range(self.dist_coreset_index.ntotal) :
+                anomaly_pxl_likelihood[i] += prob_embedding[i, k] * softmax_temp[i, indices[i, k]]
+                # if softmax_thres[i, indices[i, k]] == True :
+                #     anomaly_pxl_topk1[i] = max(anomaly_pxl_topk1[i], prob_embedding[i, k])
 
-        # calc anomaly_img_score_nb and anomaly_map_nb
-        anomaly_pxl_score = anomaly_pxl_score_total[-1] # W x H        
-        for i in range(W) :
-            for j in range(H) :
-                if (i <= self.args.dist_padding and j < H // 2) \
-                    or (i < W // 2 and j <= self.args.dist_padding) :
-                    anomaly_pxl_score[i, j] = anomaly_pxl_score_total[0][i + fivecrop_margin, j + fivecrop_margin]
-                if (i <= self.args.dist_padding and j >= H // 2) \
-                    or (i < W // 2 and j >= H - self.args.dist_padding - 1) :
-                    anomaly_pxl_score[i, j] = anomaly_pxl_score_total[1][i + fivecrop_margin, j - fivecrop_margin]
-                if (i >= W - self.args.dist_padding - 1 and j < H // 2) \
-                    or (i >= W // 2 and j <= self.args.dist_padding) :
-                    anomaly_pxl_score[i, j] = anomaly_pxl_score_total[2][i - fivecrop_margin, j + fivecrop_margin]
-                if (i >= W - self.args.dist_padding - 1 and j >= H // 2) \
-                    or (i >= W // 2 and j >= H - self.args.dist_padding - 1) :
-                    anomaly_pxl_score[i, j] = anomaly_pxl_score_total[3][i - fivecrop_margin, j - fivecrop_margin]
-
+        anomaly_pxl_score = -np.log(anomaly_pxl_likelihood).reshape(reshape_size)
         anomaly_img_score_nb = np.max(anomaly_pxl_score)
         anomaly_map_nb = anomaly_pxl_score
 
-        # calc anomaly_img_score_topk1 and anomaly_map_topk1
-        # anomaly_pxl_score_topk1 = anomaly_pxl_score_topk1_total[-1] # W x H        
-        # for i in range(W) :
-        #     for j in range(H) :
-        #         if (i <= self.args.dist_padding and j < H // 2) \
-        #             or (i < W // 2 and j <= self.args.dist_padding) :
-        #             anomaly_pxl_score_topk1[i, j] = anomaly_pxl_score_topk1_total[0][i + fivecrop_margin, j + fivecrop_margin]
-        #         if (i <= self.args.dist_padding and j >= H // 2) \
-        #             or (i < W // 2 and j >= H - self.args.dist_padding - 1) :
-        #             anomaly_pxl_score_topk1[i, j] = anomaly_pxl_score_topk1_total[1][i + fivecrop_margin, j - fivecrop_margin]
-        #         if (i >= W - self.args.dist_padding - 1 and j < H // 2) \
-        #             or (i >= W // 2 and j <= self.args.dist_padding) :
-        #             anomaly_pxl_score_topk1[i, j] = anomaly_pxl_score_topk1_total[2][i - fivecrop_margin, j + fivecrop_margin]
-        #         if (i >= W - self.args.dist_padding - 1 and j >= H // 2) \
-        #             or (i >= W // 2 and j >= H - self.args.dist_padding - 1) :
-        #             anomaly_pxl_score_topk1[i, j] = anomaly_pxl_score_topk1_total[3][i - fivecrop_margin, j - fivecrop_margin]
-
-        # anomaly_img_score_topk1 = np.max(anomaly_pxl_score_topk1)
-        # anomaly_map_topk1 = anomaly_pxl_score_topk1
-
         anomaly_img_score_topk1 = anomaly_img_score_nb
         anomaly_map_topk1 = anomaly_map_nb
-
-        # gaussian blur anomaly map (sigma = 4)           
+                
         anomaly_map_resized = cv2.resize(anomaly_map_nb, (self.args.input_size, self.args.input_size))
         anomaly_map_resized_blur = gaussian_filter(anomaly_map_resized, sigma=4)
         anomaly_map_topk1_resized = cv2.resize(anomaly_map_topk1, (self.args.input_size, self.args.input_size))
@@ -543,9 +485,6 @@ class AC_Model(pl.LightningModule):
 
         values = {'pixel_auc': pixel_auc, 'pixel_auc_topk1': pixel_auc_topk1, 'pixel_auc_patchcore': pixel_auc_patchcore, \
             'img_auc': img_auc, 'img_auc_topk1': img_auc_topk1, 'img_auc_patchcore': img_auc_patchcore}
-        
-        # if self.args.visualize_tsne:
-        #     visualize_TSNE(self.viz_feature_list, self.viz_class_idx_list, os.path.join(self.logger.log_dir, "visualize_TSNE.png"))
         
         self.log_dict(values)
         
