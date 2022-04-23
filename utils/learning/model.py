@@ -19,6 +19,10 @@ class Distribution_Model(nn.Module):
             nn.BatchNorm1d(2048),
             nn.ReLU(),
             nn.Dropout(),
+            nn.Linear(input_size, 2048),
+            nn.BatchNorm1d(2048),
+            nn.ReLU(),
+            nn.Dropout(),
             nn.Linear(2048, output_size)
         )
 
