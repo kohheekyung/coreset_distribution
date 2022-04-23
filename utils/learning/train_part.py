@@ -430,6 +430,9 @@ class AC_Model(pl.LightningModule):
         distances, indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
         distances = np.sqrt(distances)
         prob_embedding = calc_prob_embedding(distances, gamma=self.args.prob_gamma)
+        softmax_dist = np.exp(-distances * self.args.prob_gamma) / np.sum(np.exp(-distances * self.args.prob_gamma), axis = -1).reshape(-1, 1)
+        #distances = distances * (softmax_dist)
+        prob_embedding = prob_embedding * softmax_dist
 
         for i in range(neighbors.shape[0]) :
             for k in range(self.dist_coreset_index.ntotal) :
@@ -438,6 +441,7 @@ class AC_Model(pl.LightningModule):
                 #     anomaly_pxl_topk1[i] = max(anomaly_pxl_topk1[i], prob_embedding[i, k])
 
         anomaly_pxl_score = -np.log(anomaly_pxl_likelihood).reshape(reshape_size)
+        #anomaly_pxl_score = anomaly_pxl_likelihood.reshape(reshape_size)
         anomaly_img_score_nb = np.max(anomaly_pxl_score)
         anomaly_map_nb = anomaly_pxl_score
 

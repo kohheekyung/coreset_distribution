@@ -11,11 +11,11 @@ class Distribution_Model(nn.Module):
         # input_size : ~1536 * 24, output_size : ~2048
         super().__init__()
         self.fcs = nn.Sequential(
-            nn.Linear(input_size, 4096),
-            nn.BatchNorm1d(4096),
+            nn.Linear(input_size, 2048),
+            nn.BatchNorm1d(2048),
             nn.ReLU(),
             nn.Dropout(),
-            nn.Linear(4096, 2048),
+            nn.Linear(2048, 2048),
             nn.BatchNorm1d(2048),
             nn.ReLU(),
             nn.Dropout(),
