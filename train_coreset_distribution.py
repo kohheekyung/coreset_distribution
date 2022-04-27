@@ -30,6 +30,9 @@ def get_args():
     parser.add_argument('--dist_batch_size', type=int, default=512)
     parser.add_argument('--softmax_temperature', type=float, default=1.0)
     parser.add_argument('--prob_gamma', type=float, default=0.5)
+    parser.add_argument('--use_position_encoding', default=False, action='store_true', help="Whether to use position encoding")
+    parser.add_argument('--pe_weight', type=float, default=1.0)
+    parser.add_argument('--not_use_coreset_distribution', default=False, action='store_true', help='Whether not to use coreset_distribution')
     args = parser.parse_args()
     return args
 
@@ -52,7 +55,7 @@ if __name__ == '__main__':
     distribution_train_dataloader, distribution_val_dataloader, dist_input_size, dist_output_size = Distribution_Train_Dataloader(args, train_dataloader)
 
     # train coreset distribution
-    if args.phase == 'train' :
+    if args.phase == 'train' and not args.not_use_coreset_distribution:
         tb_logger = TensorBoardLogger(save_dir=default_root_dir, name="distribution")
         distribution_trainer = pl.Trainer.from_argparse_args(args, max_epochs=args.num_epochs, gpus=1, logger=tb_logger, log_every_n_steps=50, enable_checkpointing=False) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
         distribution_model = Distribution(args, dist_input_size, dist_output_size)
