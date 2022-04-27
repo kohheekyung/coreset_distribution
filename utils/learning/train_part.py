@@ -331,11 +331,15 @@ class AC_Model(pl.LightningModule):
         _ = self.feature_model(x_t)
         return self.features
 
-    def save_anomaly_map(self, anomaly_map, anomaly_map_patchcore, input_img, gt_img, file_name, x_type):
+    def save_anomaly_map(self, anomaly_map, anomaly_map_topk1, anomaly_map_patchcore, input_img, gt_img, file_name, x_type):
         if anomaly_map.shape != input_img.shape:
             anomaly_map = cv2.resize(anomaly_map, (input_img.shape[0], input_img.shape[1]))
+        if anomaly_map_topk1.shape != input_img.shape:
+            anomaly_map_topk1 = cv2.resize(anomaly_map_topk1, (input_img.shape[0], input_img.shape[1]))
         anomaly_map_norm = min_max_norm(anomaly_map)
         anomaly_map_norm_hm = cvt2heatmap(anomaly_map_norm*255)
+        anomaly_map_topk1_norm = min_max_norm(anomaly_map_topk1)
+        anomaly_map_topk1_norm_hm = cvt2heatmap(anomaly_map_topk1_norm*255)
 
         anomaly_map_norm_patchcore = min_max_norm(anomaly_map_patchcore)
         anomaly_map_norm_hm_patchcore = cvt2heatmap(anomaly_map_norm_patchcore*255)
@@ -343,12 +347,16 @@ class AC_Model(pl.LightningModule):
         # anomaly map on image
         heatmap = cvt2heatmap(anomaly_map_norm*255)
         hm_on_img = heatmap_on_image(heatmap, input_img)
+        heatmap_topk1 = cvt2heatmap(anomaly_map_topk1_norm*255)
+        hm_topk1_on_img = heatmap_on_image(heatmap_topk1, input_img)
 
         # save images
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}.jpg'), input_img)
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap.jpg'), anomaly_map_norm_hm)
+        cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_topk1.jpg'), anomaly_map_topk1_norm_hm)
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_patchcore.jpg'), anomaly_map_norm_hm_patchcore)
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_on_img.jpg'), hm_on_img)
+        cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_topk1_on_img.jpg'), hm_topk1_on_img)
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_gt.jpg'), gt_img)
 
     def configure_optimizers(self):
@@ -425,7 +433,7 @@ class AC_Model(pl.LightningModule):
         anomaly_pxl_topk1 = np.zeros(shape=(neighbors.shape[0])) # (W x H)
 
         softmax_temp = F.softmax(y_hat / self.args.softmax_temperature, dim = -1).cpu().numpy() # (W x H) x self.dist_coreset_indesx.ntotal
-        # softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > (1.0 / self.dist_coreset_index.ntotal) # threshold of softmax
+        softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > (1.0 / self.dist_coreset_index.ntotal) # threshold of softmax
 
         distances, indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
         distances = np.sqrt(distances)
@@ -437,16 +445,18 @@ class AC_Model(pl.LightningModule):
         for i in range(neighbors.shape[0]) :
             for k in range(self.dist_coreset_index.ntotal) :
                 anomaly_pxl_likelihood[i] += prob_embedding[i, k] * softmax_temp[i, indices[i, k]]
-                # if softmax_thres[i, indices[i, k]] == True :
-                #     anomaly_pxl_topk1[i] = max(anomaly_pxl_topk1[i], prob_embedding[i, k])
+                if softmax_thres[i, indices[i, k]] == True :
+                    anomaly_pxl_topk1[i] = max(anomaly_pxl_topk1[i], prob_embedding[i, k])
 
         anomaly_pxl_score = -np.log(anomaly_pxl_likelihood).reshape(reshape_size)
         #anomaly_pxl_score = anomaly_pxl_likelihood.reshape(reshape_size)
         anomaly_img_score_nb = np.max(anomaly_pxl_score)
         anomaly_map_nb = anomaly_pxl_score
 
-        anomaly_img_score_topk1 = anomaly_img_score_nb
-        anomaly_map_topk1 = anomaly_map_nb
+        # anomaly_img_score_topk1 = anomaly_img_score_nb
+        # anomaly_map_topk1 = anomaly_map_nb
+        anomaly_map_topk1 = -np.log(anomaly_pxl_topk1).reshape(reshape_size)
+        anomaly_img_score_topk1 = np.max(anomaly_map_topk1)
                 
         anomaly_map_resized = cv2.resize(anomaly_map_nb, (self.args.input_size, self.args.input_size))
         anomaly_map_resized_blur = gaussian_filter(anomaly_map_resized, sigma=4)
@@ -470,7 +480,8 @@ class AC_Model(pl.LightningModule):
         # save images
         x = self.inv_normalize(img_fivecrop[:, -1]).clip(0,1)
         input_x = cv2.cvtColor(x.permute(0,2,3,1).cpu().numpy()[0]*255, cv2.COLOR_BGR2RGB)
-        self.save_anomaly_map(anomaly_map_resized_blur, anomaly_map_patchcore_resized_blur, input_x, gt_np*255, file_name[0], x_type[0])
+        #self.save_anomaly_map(anomaly_map_resized_blur, anomaly_map_patchcore_resized_blur, input_x, gt_np*255, file_name[0], x_type[0])
+        self.save_anomaly_map(anomaly_map_resized_blur, anomaly_map_topk1_resized_blur, anomaly_map_patchcore_resized_blur, input_x, gt_np*255, file_name[0], x_type[0])
 
     def test_epoch_end(self, outputs):
         # Total pixel-level auc-roc score
