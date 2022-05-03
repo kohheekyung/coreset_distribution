@@ -31,8 +31,9 @@ def get_args():
     parser.add_argument('--softmax_temperature', type=float, default=1.0)
     parser.add_argument('--prob_gamma', type=float, default=0.5)
     parser.add_argument('--use_position_encoding', default=False, action='store_true', help="Whether to use position encoding")
-    parser.add_argument('--pe_weight', type=float, default=1.0)
+    parser.add_argument('--pe_weight', type=float, default=10)
     parser.add_argument('--not_use_coreset_distribution', default=False, action='store_true', help='Whether not to use coreset_distribution')
+    parser.add_argument('--use_reflect_resize', default=False, action='store_true', help='Whether not to use reflect_resize') # Serious anomaly problem in some categories(ex. grid)
     args = parser.parse_args()
     return args
 

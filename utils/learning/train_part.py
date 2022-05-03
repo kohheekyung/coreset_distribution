@@ -1,5 +1,6 @@
 import torch
 from torch.nn import functional as F
+from torchvision.transforms import functional as TF
 import cv2
 import os
 import numpy as np
@@ -143,7 +144,16 @@ class Coreset(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         x, _, _, file_name, _ = batch
-        features = self(x)
+
+        if self.args.use_reflect_resize :
+            pad_width = (self.args.load_size - self.args.input_size) // 2
+            pad = (pad_width, pad_width, pad_width, pad_width) # pad last dim by (pad_width, pad_width) and 2nd to last by (pad_width, pad_width)
+            x_padding = F.pad(x, pad, "reflect")
+            x_padding = TF.resize(x_padding, (self.args.input_size, self.args.input_size))
+            features = self(x_padding)
+            
+        else :
+            features = self(x)
         
         if '+' in self.args.block_index :        
             embeddings = []
@@ -153,6 +163,9 @@ class Coreset(pl.LightningModule):
             embedding_ = np.array(embedding_concat(embeddings[0], embeddings[1]))
         else :
             embedding_ = np.array(features[0].cpu())
+        if self.args.use_reflect_resize :
+            crop_pad = int(embedding_.shape[-1] * (self.args.load_size - self.args.input_size) / self.args.input_size / 2)
+            embedding_ = embedding_[:, :, crop_pad:-crop_pad, crop_pad:-crop_pad]
         self.embedding_list.extend(reshape_embedding(embedding_))
 
         if self.args.use_position_encoding : 
@@ -426,7 +439,14 @@ class AC_Model(pl.LightningModule):
         x, gt, label, file_name, x_type = batch
         
         # extract embedding
-        features = self(x)
+        if self.args.use_reflect_resize :
+            pad_width = (self.args.load_size - self.args.input_size) // 2
+            pad = (pad_width, pad_width, pad_width, pad_width) # pad last dim by (pad_width, pad_width) and 2nd to last by (pad_width, pad_width)
+            x_padding = F.pad(x, pad, "reflect")
+            x_padding = TF.resize(x_padding, (self.args.input_size, self.args.input_size))
+            features = self(x_padding)
+        else :
+            features = self(x)
         
         if '+' in self.args.block_index : 
             embeddings = []
@@ -436,10 +456,13 @@ class AC_Model(pl.LightningModule):
             embedding_ = np.array(embedding_concat(embeddings[0], embeddings[1])) # 1 x E x W x H
         else :
             embedding_ = np.array(features[0].cpu())
+        if self.args.use_reflect_resize :
+            crop_pad = int(embedding_.shape[-1] * (self.args.load_size - self.args.input_size) / self.args.input_size / 2)
+            embedding_ = embedding_[:, :, crop_pad:-crop_pad, crop_pad:-crop_pad]
         embedding_test = np.array(reshape_embedding(embedding_)) # (W x H) x E
 
-        if self.args.use_position_encoding : 
-            W, H = embedding_.shape[2:]
+        W, H = embedding_.shape[2:]
+        if self.args.use_position_encoding :             
             position_encoding = np.zeros(shape=(1, 2, W, H))
             for i in range(W) :
                 for j in range(H) : 
@@ -465,16 +488,17 @@ class AC_Model(pl.LightningModule):
                             neighbor = np.concatenate((neighbor, embedding_pad[:, i_idx+di+self.args.dist_padding, j_idx+dj+self.args.dist_padding]))
                     neighbors[i_idx, j_idx] = neighbor
 
-        if self.args.block_index == '1+2':
-            reshape_size = (56,56)
-        elif self.args.block_index == '2+3':
-            reshape_size = (28,28)
-        elif self.args.block_index == '3+4':
-            reshape_size = (14,14)
-        elif self.args.block_index == '5' :
-            reshape_size = (1,1)
-        elif self.args.block_index == '4' :
-            reshape_size = (7,7)
+        reshape_size = (W, H)
+        # if self.args.block_index == '1+2':
+        #     reshape_size = (56,56)
+        # elif self.args.block_index == '2+3':
+        #     reshape_size = (28,28)
+        # elif self.args.block_index == '3+4':
+        #     reshape_size = (14,14)
+        # elif self.args.block_index == '5' :
+        #     reshape_size = (1,1)
+        # elif self.args.block_index == '4' :
+        #     reshape_size = (7,7)
 
         ## patchcore        
         embedding_score, embedding_indices = self.embedding_coreset_index.search(embedding_test, k=self.args.n_neighbors) # (W x H) x self.args.n_neighbors
@@ -583,10 +607,11 @@ class AC_Model(pl.LightningModule):
         self.log_dict(values)
         
         f = open(os.path.join(self.args.project_root_path, "score_result.csv"), "a")
-        data = [self.args.category, str(self.args.coreset_sampling_ratio), str(self.args.dist_coreset_size), str(self.args.dist_padding), \
-                str(self.args.softmax_temperature), str(self.args.prob_gamma), \
-                str(pixel_auc), str(pixel_auc_topk1), str(pixel_auc_patchcore), \
-                str(img_auc), str(img_auc_topk1), str(img_auc_patchcore)]
+        # data = [self.args.category, str(self.args.coreset_sampling_ratio), str(self.args.dist_coreset_size), str(self.args.dist_padding), \
+        #         str(self.args.softmax_temperature), str(self.args.prob_gamma), \
+        #         str(pixel_auc), str(pixel_auc_topk1), str(pixel_auc_patchcore), \
+        #         str(img_auc), str(img_auc_topk1), str(img_auc_patchcore)]
+        data = [self.args.category, str(self.args.coreset_sampling_ratio), str(self.args.use_reflect_resize), str(pixel_auc), str(img_auc)]
         data = ','.join(data) + '\n'
         f.write(data)
         f.close()
