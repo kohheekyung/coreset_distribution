@@ -150,8 +150,7 @@ class Coreset(pl.LightningModule):
             pad = (pad_width, pad_width, pad_width, pad_width) # pad last dim by (pad_width, pad_width) and 2nd to last by (pad_width, pad_width)
             x_padding = F.pad(x, pad, "reflect")
             x_padding = TF.resize(x_padding, (self.args.input_size, self.args.input_size))
-            features = self(x_padding)
-            
+            features = self(x_padding)            
         else :
             features = self(x)
         
@@ -196,7 +195,8 @@ class Coreset(pl.LightningModule):
         self.dist_coreset = total_embeddings[selected_idx][:dist_coreset_size]
                 
         print('initial embedding size : ', total_embeddings.shape)
-        print('final embedding size : ', self.embedding_coreset.shape)
+        print('final embedding coreset size : ', self.embedding_coreset.shape)
+        print('final dist coreset size : ', self.dist_coreset.shape)
         
         #faiss
         self.embedding_coreset_index = faiss.IndexFlatL2(self.embedding_coreset.shape[1])
@@ -224,7 +224,8 @@ class Coreset(pl.LightningModule):
             self.dist_coreset = total_embeddings_pe[selected_idx][:dist_coreset_size]
                     
             print('initial embedding_pe size : ', total_embeddings_pe.shape)
-            print('final embedding_pe size : ', self.embedding_coreset.shape)
+            print('final embedding coreset_pe size : ', self.embedding_coreset.shape)
+            print('final dist coreset_pe size : ', self.dist_coreset.shape)
             
             #faiss
             self.embedding_coreset_index = faiss.IndexFlatL2(self.embedding_coreset.shape[1])
@@ -234,7 +235,6 @@ class Coreset(pl.LightningModule):
             self.dist_coreset_index = faiss.IndexFlatL2(self.dist_coreset.shape[1])
             self.dist_coreset_index.add(self.dist_coreset)
             faiss.write_index(self.dist_coreset_index, os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
-
 
     def configure_optimizers(self):
         return None
@@ -372,6 +372,9 @@ class AC_Model(pl.LightningModule):
         self.pred_list_img_lvl_patchcore = []
         self.img_path_list = []
         self.img_type_list = []
+        if self.args.use_position_encoding :
+            self.pred_list_px_lvl_pe = []
+            self.pred_list_img_lvl_pe = []
 
     def init_features(self):
         self.features = []
@@ -425,11 +428,11 @@ class AC_Model(pl.LightningModule):
             self.embedding_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.embedding_coreset_index)
 
         if self.args.use_position_encoding : 
-            self.dist_coreset_pe_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
+            self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
             self.embedding_coreset_pe_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.coreset_sampling_ratio*100)}_pe.faiss'))
             if torch.cuda.is_available():
                 res = faiss.StandardGpuResources()
-                self.dist_coreset_pe_index = faiss.index_cpu_to_gpu(res, 0 ,self.dist_coreset_pe_index)
+                self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.dist_coreset_index)
                 self.embedding_coreset_pe_index = faiss.index_cpu_to_gpu(res, 0 ,self.embedding_coreset_pe_index)
 
         self.init_results_list()
@@ -456,6 +459,7 @@ class AC_Model(pl.LightningModule):
             embedding_ = np.array(embedding_concat(embeddings[0], embeddings[1])) # 1 x E x W x H
         else :
             embedding_ = np.array(features[0].cpu())
+            
         if self.args.use_reflect_resize :
             crop_pad = int(embedding_.shape[-1] * (self.args.load_size - self.args.input_size) / self.args.input_size / 2)
             embedding_ = embedding_[:, :, crop_pad:-crop_pad, crop_pad:-crop_pad]
@@ -473,9 +477,17 @@ class AC_Model(pl.LightningModule):
             embedding_pe_test = np.array(reshape_embedding(embedding_pe)) # (W x H) x (E + 2)
         
         if not self.args.not_use_coreset_distribution:
-            embedding_ = embedding_.squeeze() # E x W x H
-            pad_width = ((0,),(self.args.dist_padding,),(self.args.dist_padding,))
-            embedding_pad = np.pad(embedding_, pad_width, "reflect") # E x (W+1) x (H+1)
+            if self.args.use_position_encoding :
+                embedding_ = embedding_pe.squeeze() # E x W x H
+                pad_width = ((0,),(self.args.dist_padding,),(self.args.dist_padding,))
+                embedding_pad = np.pad(embedding_[:-2], pad_width, "reflect") # (E-2) x (W+1) x (H+1), without position encoding
+                pe_pad = np.pad(embedding_[-2:], pad_width, "reflect", reflect_type='odd') # 2 x (W+1) x (H+1), only position encoding
+                embedding_pad = np.concatenate((embedding_pad, pe_pad), axis = 0) # E x (W+1) x (H+1)
+            else :
+                embedding_ = embedding_.squeeze() # E x W x H
+                pad_width = ((0,),(self.args.dist_padding,),(self.args.dist_padding,))       
+                embedding_pad = np.pad(embedding_, pad_width, "reflect") # E x (W+1) x (H+1)
+                
             neighbors = np.zeros(shape=(embedding_.shape[1], embedding_.shape[2], embedding_.shape[0]*(pow(self.args.dist_padding*2+1, 2) - 1))) # W x H x NE
             # construct neighbor features
             for i_idx in range(embedding_.shape[1]) :
@@ -489,16 +501,6 @@ class AC_Model(pl.LightningModule):
                     neighbors[i_idx, j_idx] = neighbor
 
         reshape_size = (W, H)
-        # if self.args.block_index == '1+2':
-        #     reshape_size = (56,56)
-        # elif self.args.block_index == '2+3':
-        #     reshape_size = (28,28)
-        # elif self.args.block_index == '3+4':
-        #     reshape_size = (14,14)
-        # elif self.args.block_index == '5' :
-        #     reshape_size = (1,1)
-        # elif self.args.block_index == '4' :
-        #     reshape_size = (7,7)
 
         ## patchcore        
         embedding_score, embedding_indices = self.embedding_coreset_index.search(embedding_test, k=self.args.n_neighbors) # (W x H) x self.args.n_neighbors
@@ -510,16 +512,31 @@ class AC_Model(pl.LightningModule):
 
         anomaly_img_score_patchcore = weights_from_code * max_embedding_score # Image-level score
         anomaly_map_patchcore = embedding_score[:, 0].reshape(reshape_size)
+        
+        if self.args.use_position_encoding :
+            embedding_pe_score, embedding_pe_indices = self.embedding_coreset_pe_index.search(embedding_pe_test, k=self.args.n_neighbors) # (W x H) x self.args.n_neighbors
+            embedding_pe_score = np.sqrt(embedding_pe_score)
+            
+            max_anomaly_idx = np.argmax(embedding_pe_score[:, 0])
+            max_embedding_score = embedding_pe_score[max_anomaly_idx, 0] # maximum embedding score
+            weights_from_code = 1 - 1 / np.sum(np.exp(embedding_pe_score[max_anomaly_idx] - max_embedding_score))
+
+            anomaly_img_score_pe= weights_from_code * max_embedding_score # Image-level score
+            anomaly_map_pe = embedding_pe_score[:, 0].reshape(reshape_size)
 
         if not self.args.not_use_coreset_distribution:
+            if self.args.use_position_encoding :
+                embedding_test = embedding_pe_test
             ## anomaly using neighbor distribution
             neighbors = neighbors.reshape(-1, neighbors.shape[2]).astype(np.float32) # (W x H) x NE
             y_hat = self.dist_model(torch.tensor(neighbors).cuda()).cpu() # (W x H) x self.dist_coreset_index.ntotal
             anomaly_pxl_likelihood = np.zeros(shape=(neighbors.shape[0])) # (W x H)
-            anomaly_pxl_topk1 = np.zeros(shape=(neighbors.shape[0])) # (W x H)
+            anomaly_pxl_topk1 = np.ones(shape=(neighbors.shape[0])) * 1e+6 # (W x H)
+            # anomaly_pxl_topk1 = np.zeros(shape=(neighbors.shape[0])) # (W x H)
 
             softmax_temp = F.softmax(y_hat / self.args.softmax_temperature, dim = -1).cpu().numpy() # (W x H) x self.dist_coreset_indesx.ntotal
-            softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > (1.0 / self.dist_coreset_index.ntotal) # threshold of softmax
+            softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > (3.0 / self.dist_coreset_index.ntotal) # threshold of softmax
+            # softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > 0.01 # threshold of softmax
 
             distances, indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
             distances = np.sqrt(distances)
@@ -530,36 +547,25 @@ class AC_Model(pl.LightningModule):
 
             for i in range(neighbors.shape[0]) :
                 for k in range(self.dist_coreset_index.ntotal) :
-                    anomaly_pxl_likelihood[i] += prob_embedding[i, k] * softmax_temp[i, indices[i, k]]
+                    anomaly_pxl_likelihood[i] += distances[i, k] * softmax_temp[i, indices[i, k]]
                     if softmax_thres[i, indices[i, k]] == True :
-                        anomaly_pxl_topk1[i] = max(anomaly_pxl_topk1[i], prob_embedding[i, k])
+                        anomaly_pxl_topk1[i] = min(anomaly_pxl_topk1[i], distances[i, k])
 
-            anomaly_pxl_score = -np.log(anomaly_pxl_likelihood).reshape(reshape_size)
-            #anomaly_pxl_score = anomaly_pxl_likelihood.reshape(reshape_size)
+            # anomaly_pxl_score = -np.log(anomaly_pxl_likelihood).reshape(reshape_size)
+            anomaly_pxl_score = anomaly_pxl_likelihood.reshape(reshape_size)
             anomaly_img_score_nb = np.max(anomaly_pxl_score)
             anomaly_map_nb = anomaly_pxl_score
 
             # anomaly_img_score_topk1 = anomaly_img_score_nb
             # anomaly_map_topk1 = anomaly_map_nb
-            anomaly_map_topk1 = -np.log(anomaly_pxl_topk1).reshape(reshape_size)
+            # anomaly_pxl_topk1 = prob_embedding[:, 0]
+            # anomaly_map_topk1 = -np.log(anomaly_pxl_topk1).reshape(reshape_size)
+            # anomaly_map_topk1 = distances[:, 0].reshape(reshape_size)
+            anomaly_map_topk1 = anomaly_pxl_topk1.reshape(reshape_size)
             anomaly_img_score_topk1 = np.max(anomaly_map_topk1)
-        elif self.args.use_position_encoding :
-            embedding_pe_score, embedding_pe_indices = self.embedding_coreset_pe_index.search(embedding_pe_test, k=self.args.n_neighbors) # (W x H) x self.args.n_neighbors
-            embedding_pe_score = np.sqrt(embedding_pe_score)
-            
-            max_anomaly_idx = np.argmax(embedding_pe_score[:, 0])
-            max_embedding_score = embedding_pe_score[max_anomaly_idx, 0] # maximum embedding score
-            weights_from_code = 1 - 1 / np.sum(np.exp(embedding_pe_score[max_anomaly_idx] - max_embedding_score))
-
-            anomaly_img_score_nb= weights_from_code * max_embedding_score # Image-level score
-            anomaly_map_nb = embedding_pe_score[:, 0].reshape(reshape_size)
-
-            anomaly_img_score_topk1 = anomaly_img_score_patchcore
-            anomaly_map_topk1 = anomaly_map_patchcore
         else :
             anomaly_img_score_nb = anomaly_img_score_topk1 = anomaly_img_score_patchcore
             anomaly_map_nb = anomaly_map_topk1 = anomaly_map_patchcore
-
                 
         anomaly_map_resized = cv2.resize(anomaly_map_nb, (self.args.input_size, self.args.input_size))
         anomaly_map_resized_blur = gaussian_filter(anomaly_map_resized, sigma=4)
@@ -567,6 +573,9 @@ class AC_Model(pl.LightningModule):
         anomaly_map_topk1_resized_blur = gaussian_filter(anomaly_map_topk1_resized, sigma=4)
         anomaly_map_patchcore_resized = cv2.resize(anomaly_map_patchcore, (self.args.input_size, self.args.input_size))
         anomaly_map_patchcore_resized_blur = gaussian_filter(anomaly_map_patchcore_resized, sigma=4)
+        if self.args.use_position_encoding :
+            anomaly_map_pe_resized = cv2.resize(anomaly_map_pe, (self.args.input_size, self.args.input_size))
+            anomaly_map_pe_resized_blur = gaussian_filter(anomaly_map_pe_resized, sigma=4)
         
         gt_np = gt.cpu().numpy()[0,0].astype(int)
         self.gt_list_px_lvl.extend(gt_np.ravel())
@@ -579,6 +588,9 @@ class AC_Model(pl.LightningModule):
         self.pred_list_img_lvl_patchcore.append(anomaly_img_score_patchcore)
         self.img_path_list.extend(file_name)
         self.img_type_list.append(x_type[0])
+        if self.args.use_position_encoding :
+            self.pred_list_px_lvl_pe.extend(anomaly_map_pe_resized_blur.ravel())
+            self.pred_list_img_lvl_pe.append(anomaly_img_score_pe)
         
         # save images
         x = self.inv_normalize(x).clip(0,1)
@@ -593,6 +605,9 @@ class AC_Model(pl.LightningModule):
         pixel_auc_topk1 = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl_topk1)
         # Total pixel-level auc-roc score for patchcore version
         pixel_auc_patchcore = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl_patchcore)
+        
+        if self.args.use_position_encoding :
+            pixel_auc_pe = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl_pe)
 
         # Total image-level auc-roc score
         img_auc = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl)
@@ -600,9 +615,16 @@ class AC_Model(pl.LightningModule):
         img_auc_topk1 = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl_topk1)
         # Total image-level auc-roc score for patchcore version
         img_auc_patchcore = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl_patchcore)
+        
+        if self.args.use_position_encoding :
+            img_auc_pe = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl_pe)
 
         values = {'pixel_auc': pixel_auc, 'pixel_auc_topk1': pixel_auc_topk1, 'pixel_auc_patchcore': pixel_auc_patchcore, \
             'img_auc': img_auc, 'img_auc_topk1': img_auc_topk1, 'img_auc_patchcore': img_auc_patchcore}
+        
+        if self.args.use_position_encoding :
+            values['pixel_auc_pe'] = pixel_auc_pe
+            values['img_auc_pe'] = img_auc_pe
         
         self.log_dict(values)
         
@@ -611,7 +633,10 @@ class AC_Model(pl.LightningModule):
         #         str(self.args.softmax_temperature), str(self.args.prob_gamma), \
         #         str(pixel_auc), str(pixel_auc_topk1), str(pixel_auc_patchcore), \
         #         str(img_auc), str(img_auc_topk1), str(img_auc_patchcore)]
-        data = [self.args.category, str(self.args.coreset_sampling_ratio), str(self.args.use_reflect_resize), str(pixel_auc), str(img_auc)]
+        data = [self.args.category, str(self.args.coreset_sampling_ratio), str(self.args.dist_coreset_size), str(self.args.dist_padding), \
+                str(self.args.softmax_temperature), str(self.args.prob_gamma), \
+                str(pixel_auc), str(pixel_auc_topk1), str(pixel_auc_patchcore), str(pixel_auc_pe), \
+                str(img_auc), str(img_auc_topk1), str(img_auc_patchcore), str(img_auc_pe)]
         data = ','.join(data) + '\n'
         f.write(data)
         f.close()

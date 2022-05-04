@@ -29,7 +29,7 @@ def get_args():
     parser.add_argument('--step_size', type=int, default=5)
     parser.add_argument('--dist_batch_size', type=int, default=512)
     parser.add_argument('--softmax_temperature', type=float, default=1.0)
-    parser.add_argument('--prob_gamma', type=float, default=0.5)
+    parser.add_argument('--prob_gamma', type=float, default=0.99)
     parser.add_argument('--use_position_encoding', default=False, action='store_true', help="Whether to use position encoding")
     parser.add_argument('--pe_weight', type=float, default=10)
     parser.add_argument('--not_use_coreset_distribution', default=False, action='store_true', help='Whether not to use coreset_distribution')
@@ -46,7 +46,7 @@ if __name__ == '__main__':
     train_dataloader = Train_Dataloader(args)
     test_dataloader = Test_Dataloader(args)
 
-    # generate coreset
+    # generate coreset and save it to faiss
     if args.phase == 'train' :
         coreset_generator_trainer = pl.Trainer.from_argparse_args(args, default_root_dir=os.path.join(default_root_dir, 'coreset'), max_epochs=1, gpus=1, enable_checkpointing=False) #, check_val_every_n_epoch=args.val_freq,  num_sanity_val_steps=0) # ,fast_dev_run=True)
         coreset_generator = Coreset(args)

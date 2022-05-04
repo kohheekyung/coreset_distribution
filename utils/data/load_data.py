@@ -158,7 +158,11 @@ class Distribution_Dataset_Generator():
 
     def generate(self, dataloader):
         self.embedding_dir_path = os.path.join('./', f'embeddings_{self.args.block_index}', self.args.category)
-        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
+        if self.args.use_position_encoding :
+            self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
+        else : 
+            self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
+            
         if torch.cuda.is_available():
             res = faiss.StandardGpuResources()
             self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.dist_coreset_index)
@@ -176,6 +180,16 @@ class Distribution_Dataset_Generator():
                 embedding_ = np.array(embedding_concat(embeddings[0], embeddings[1])) # N x E x W x H
             else :
                 embedding_ = np.array(features[0].cpu())
+                
+            if self.args.use_position_encoding : 
+                W, H = embedding_.shape[2:]
+                position_encoding = np.zeros(shape=(1, 2, W, H))
+                for i in range(W) :
+                    for j in range(H) : 
+                        position_encoding[0, 0, i, j] = self.args.pe_weight * i / W
+                        position_encoding[0, 1, i, j] = self.args.pe_weight * j / H
+                position_encoding = np.tile(position_encoding, (embedding_.shape[0], 1, 1, 1)).astype(np.float32)
+                embedding_ = np.concatenate((embedding_, position_encoding), axis = 1)
 
             # find index of embedding vector which is closest to self.dist_coreset_index
             embedding_t = embedding_.transpose(0,2,3,1) # N x W x H x E
@@ -206,8 +220,12 @@ class Distribution_Dataset_Generator():
         embedding_indices = self.embedding_indices_list[list_idx] # 1 x W x H
         
         pad_width = ((0,),(self.padding,),(self.padding,))
-        embedding_pad = np.pad(embedding, pad_width, "reflect") # E x (W+1) x (H+1)
-
+        if self.args.use_position_encoding :
+            embedding_pad = np.pad(embedding[:-2], pad_width, "reflect") # (E-2) x (W+1) x (H+1), without position encoding
+            pe_pad = np.pad(embedding[-2:], pad_width, "reflect", reflect_type='odd') # 2 x (W+1) x (H+1), only position encoding
+            embedding_pad = np.concatenate((embedding_pad, pe_pad), axis = 0) # E x (W+1) x (H+1)
+        else :
+            embedding_pad = np.pad(embedding, pad_width, "reflect") # E x (W+1) x (H+1)
         index = embedding_indices[0, i_idx, j_idx]
         neighbor = np.zeros(shape=(0,))
         for di in range(-self.padding, self.padding+1) :
