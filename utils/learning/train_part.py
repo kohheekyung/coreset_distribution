@@ -167,7 +167,7 @@ class Coreset(pl.LightningModule):
             embedding_ = embedding_[:, :, crop_pad:-crop_pad, crop_pad:-crop_pad]
         self.embedding_list.extend(reshape_embedding(embedding_))
 
-        if self.args.use_position_encoding : 
+        if self.args.use_position_encoding :
             W, H = embedding_.shape[2:]
             position_encoding = np.zeros(shape=(1, 2, W, H))
             for i in range(W) :
@@ -175,8 +175,9 @@ class Coreset(pl.LightningModule):
                     position_encoding[0, 0, i, j] = self.args.pe_weight * i / W
                     position_encoding[0, 1, i, j] = self.args.pe_weight * j / H
             position_encoding = np.tile(position_encoding, (embedding_.shape[0], 1, 1, 1)).astype(np.float32)
-            embedding_pe = np.concatenate((embedding_, position_encoding), axis = 1)
-            self.embedding_pe_list.extend(reshape_embedding(embedding_pe))        
+            #embedding_pe = np.concatenate((embedding_, position_encoding), axis = 1)
+            embedding_pe = np.concatenate((embedding_ + position_encoding[:, :1, :, :], embedding_ + position_encoding[:, 1:, :, :]), axis = 1)
+            self.embedding_pe_list.extend(reshape_embedding(embedding_pe))
 
     def training_epoch_end(self, outputs):
         total_embeddings = np.array(self.embedding_list)
@@ -384,7 +385,7 @@ class AC_Model(pl.LightningModule):
         _ = self.feature_model(x_t)
         return self.features
 
-    def save_anomaly_map(self, anomaly_map, anomaly_map_topk1, anomaly_map_patchcore, input_img, gt_img, file_name, x_type):
+    def save_anomaly_map(self, anomaly_map, anomaly_map_topk1, anomaly_map_patchcore, anomaly_map_pe, input_img, gt_img, file_name, x_type):
         if anomaly_map.shape != input_img.shape:
             anomaly_map = cv2.resize(anomaly_map, (input_img.shape[0], input_img.shape[1]))
         if anomaly_map_topk1.shape != input_img.shape:
@@ -396,6 +397,8 @@ class AC_Model(pl.LightningModule):
 
         anomaly_map_norm_patchcore = min_max_norm(anomaly_map_patchcore)
         anomaly_map_norm_hm_patchcore = cvt2heatmap(anomaly_map_norm_patchcore*255)
+        anomaly_map_norm_pe = min_max_norm(anomaly_map_pe)
+        anomaly_map_norm_hm_pe = cvt2heatmap(anomaly_map_norm_pe*255)
 
         # anomaly map on image
         heatmap = cvt2heatmap(anomaly_map_norm*255)
@@ -408,6 +411,7 @@ class AC_Model(pl.LightningModule):
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap.jpg'), anomaly_map_norm_hm)
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_topk1.jpg'), anomaly_map_topk1_norm_hm)
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_patchcore.jpg'), anomaly_map_norm_hm_patchcore)
+        cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_pe.jpg'), anomaly_map_norm_hm_pe)
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_on_img.jpg'), hm_on_img)
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_topk1_on_img.jpg'), hm_topk1_on_img)
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_gt.jpg'), gt_img)
@@ -428,15 +432,17 @@ class AC_Model(pl.LightningModule):
             self.embedding_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.embedding_coreset_index)
 
         if self.args.use_position_encoding : 
-            self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
+            #self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
             self.embedding_coreset_pe_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.coreset_sampling_ratio*100)}_pe.faiss'))
             if torch.cuda.is_available():
                 res = faiss.StandardGpuResources()
-                self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.dist_coreset_index)
+                #self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.dist_coreset_index)
                 self.embedding_coreset_pe_index = faiss.index_cpu_to_gpu(res, 0 ,self.embedding_coreset_pe_index)
 
         self.init_results_list()
         self.embedding_dir_path, self.sample_path, self.source_code_save_path = prep_dirs(self.logger.log_dir, self.args)
+        self.pe_pad = None
+        self.position_encoding = None
 
     def test_step(self, batch, batch_idx): # Nearest Neighbour Search
         x, gt, label, file_name, x_type = batch
@@ -466,32 +472,27 @@ class AC_Model(pl.LightningModule):
         embedding_test = np.array(reshape_embedding(embedding_)) # (W x H) x E
 
         W, H = embedding_.shape[2:]
-        if self.args.use_position_encoding :             
-            position_encoding = np.zeros(shape=(1, 2, W, H))
+        
+        if self.position_encoding is None :
+            self.position_encoding = np.zeros(shape=(1, 2, W, H)) # 1 x 2 x W x H
             for i in range(W) :
                 for j in range(H) : 
-                    position_encoding[0, 0, i, j] = self.args.pe_weight * i / W
-                    position_encoding[0, 1, i, j] = self.args.pe_weight * j / H
-            position_encoding = np.tile(position_encoding, (embedding_.shape[0], 1, 1, 1)).astype(np.float32)
-            embedding_pe = np.concatenate((embedding_, position_encoding), axis = 1)
-            embedding_pe_test = np.array(reshape_embedding(embedding_pe)) # (W x H) x (E + 2)
-        
+                    self.position_encoding[0, 0, i, j] = self.args.pe_weight * i / W
+                    self.position_encoding[0, 1, i, j] = self.args.pe_weight * j / H
+        if self.pe_pad is None :
+            pad_width = ((0,),(self.args.dist_padding,),(self.args.dist_padding,))
+            self.pe_pad = np.pad(self.position_encoding.squeeze(0), pad_width, "reflect", reflect_type='odd') # 2 x (W+1) x (H+1)       
+            
         if not self.args.not_use_coreset_distribution:
+            pad_width = ((0,),(self.args.dist_padding,),(self.args.dist_padding,))         
+            embedding_pad = np.pad(embedding_.squeeze(), pad_width, "reflect") # E x (W+1) x (H+1)
             if self.args.use_position_encoding :
-                embedding_ = embedding_pe.squeeze() # E x W x H
-                pad_width = ((0,),(self.args.dist_padding,),(self.args.dist_padding,))
-                embedding_pad = np.pad(embedding_[:-2], pad_width, "reflect") # (E-2) x (W+1) x (H+1), without position encoding
-                pe_pad = np.pad(embedding_[-2:], pad_width, "reflect", reflect_type='odd') # 2 x (W+1) x (H+1), only position encoding
-                embedding_pad = np.concatenate((embedding_pad, pe_pad), axis = 0) # E x (W+1) x (H+1)
-            else :
-                embedding_ = embedding_.squeeze() # E x W x H
-                pad_width = ((0,),(self.args.dist_padding,),(self.args.dist_padding,))       
-                embedding_pad = np.pad(embedding_, pad_width, "reflect") # E x (W+1) x (H+1)
-                
-            neighbors = np.zeros(shape=(embedding_.shape[1], embedding_.shape[2], embedding_.shape[0]*(pow(self.args.dist_padding*2+1, 2) - 1))) # W x H x NE
+                embedding_pad = np.concatenate((embedding_pad + self.pe_pad[:1], embedding_pad + self.pe_pad[1:]), axis = 0) # 2E x (W+1) x (H+1)    
+                                
+            neighbors = np.zeros(shape=(W, H, embedding_pad.shape[0]*(pow(self.args.dist_padding*2+1, 2) - 1))) # W x H x NE
             # construct neighbor features
-            for i_idx in range(embedding_.shape[1]) :
-                for j_idx in range(embedding_.shape[2]) :
+            for i_idx in range(W) :
+                for j_idx in range(H) :
                     neighbor = np.zeros(shape=(0,))
                     for di in range(-self.args.dist_padding, self.args.dist_padding+1) :
                         for dj in range(-self.args.dist_padding, self.args.dist_padding+1) :
@@ -513,7 +514,15 @@ class AC_Model(pl.LightningModule):
         anomaly_img_score_patchcore = weights_from_code * max_embedding_score # Image-level score
         anomaly_map_patchcore = embedding_score[:, 0].reshape(reshape_size)
         
-        if self.args.use_position_encoding :
+        ## patchcore using position encoding
+        anomaly_img_score_pe = anomaly_img_score_patchcore
+        anomaly_map_pe = anomaly_map_patchcore
+        if self.args.use_position_encoding :                            
+            position_encoding_tile = np.tile(self.position_encoding, (embedding_.shape[0], 1, 1, 1)).astype(np.float32)
+            #embedding_pe = np.concatenate((embedding_, position_encoding), axis = 1)
+            embedding_pe = np.concatenate((embedding_ + position_encoding_tile[:, :1, :, :], embedding_ + position_encoding_tile[:, 1:, :, :]), axis = 1)
+            embedding_pe_test = np.array(reshape_embedding(embedding_pe)) # (W x H) x (2E)
+            
             embedding_pe_score, embedding_pe_indices = self.embedding_coreset_pe_index.search(embedding_pe_test, k=self.args.n_neighbors) # (W x H) x self.args.n_neighbors
             embedding_pe_score = np.sqrt(embedding_pe_score)
             
@@ -524,10 +533,10 @@ class AC_Model(pl.LightningModule):
             anomaly_img_score_pe= weights_from_code * max_embedding_score # Image-level score
             anomaly_map_pe = embedding_pe_score[:, 0].reshape(reshape_size)
 
+        ## using neighbor distribution
+        anomaly_img_score_nb = anomaly_img_score_topk1 = anomaly_img_score_patchcore
+        anomaly_map_nb = anomaly_map_topk1 = anomaly_map_patchcore
         if not self.args.not_use_coreset_distribution:
-            if self.args.use_position_encoding :
-                embedding_test = embedding_pe_test
-            ## anomaly using neighbor distribution
             neighbors = neighbors.reshape(-1, neighbors.shape[2]).astype(np.float32) # (W x H) x NE
             y_hat = self.dist_model(torch.tensor(neighbors).cuda()).cpu() # (W x H) x self.dist_coreset_index.ntotal
             anomaly_pxl_likelihood = np.zeros(shape=(neighbors.shape[0])) # (W x H)
@@ -535,8 +544,8 @@ class AC_Model(pl.LightningModule):
             # anomaly_pxl_topk1 = np.zeros(shape=(neighbors.shape[0])) # (W x H)
 
             softmax_temp = F.softmax(y_hat / self.args.softmax_temperature, dim = -1).cpu().numpy() # (W x H) x self.dist_coreset_indesx.ntotal
-            softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > (3.0 / self.dist_coreset_index.ntotal) # threshold of softmax
-            # softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > 0.01 # threshold of softmax
+            softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > (10.0 / self.dist_coreset_index.ntotal) # threshold of softmax
+            #softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > 0.04 # threshold of softmax
 
             distances, indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
             distances = np.sqrt(distances)
@@ -544,15 +553,29 @@ class AC_Model(pl.LightningModule):
             softmax_dist = np.exp(-distances * self.args.prob_gamma) / np.sum(np.exp(-distances * self.args.prob_gamma), axis = -1).reshape(-1, 1)
             #distances = distances * (softmax_dist)
             prob_embedding = prob_embedding * softmax_dist
-
+            
+            softmax_temp_inverse = np.zeros_like(softmax_temp)
+            softmax_thres_inverse = np.zeros_like(softmax_thres)
             for i in range(neighbors.shape[0]) :
                 for k in range(self.dist_coreset_index.ntotal) :
-                    anomaly_pxl_likelihood[i] += distances[i, k] * softmax_temp[i, indices[i, k]]
-                    if softmax_thres[i, indices[i, k]] == True :
-                        anomaly_pxl_topk1[i] = min(anomaly_pxl_topk1[i], distances[i, k])
+                    softmax_temp_inverse[i, k] = softmax_temp[i, indices[i, k]]
+                    softmax_thres_inverse[i, k] = softmax_thres[i, indices[i, k]]
+                    
+            anomaly_pxl_likelihood = np.sum(distances * softmax_temp_inverse, axis = 1)
+            anomaly_pxl_topk1 = np.apply_along_axis(lambda a : np.min(a[a!=0]), 1, distances * softmax_thres_inverse)
+            # topk1_index = np.argmax(softmax_temp, axis = 1)
+            # for i in range(neighbors.shape[0]) :
+            #     anomaly_pxl_topk1[i] = distances[i, 0] 
+
+            # for i in range(neighbors.shape[0]) :
+            #     for k in range(self.dist_coreset_index.ntotal) :
+            #         anomaly_pxl_likelihood[i] += distances[i, k] * softmax_temp[i, indices[i, k]]
+            #         if softmax_thres[i, indices[i, k]] == True :
+            #             anomaly_pxl_topk1[i] = min(anomaly_pxl_topk1[i], distances[i, k])
 
             # anomaly_pxl_score = -np.log(anomaly_pxl_likelihood).reshape(reshape_size)
             anomaly_pxl_score = anomaly_pxl_likelihood.reshape(reshape_size)
+            # anomaly_pxl_score = distances[:, 0].reshape(reshape_size)
             anomaly_img_score_nb = np.max(anomaly_pxl_score)
             anomaly_map_nb = anomaly_pxl_score
 
@@ -563,9 +586,6 @@ class AC_Model(pl.LightningModule):
             # anomaly_map_topk1 = distances[:, 0].reshape(reshape_size)
             anomaly_map_topk1 = anomaly_pxl_topk1.reshape(reshape_size)
             anomaly_img_score_topk1 = np.max(anomaly_map_topk1)
-        else :
-            anomaly_img_score_nb = anomaly_img_score_topk1 = anomaly_img_score_patchcore
-            anomaly_map_nb = anomaly_map_topk1 = anomaly_map_patchcore
                 
         anomaly_map_resized = cv2.resize(anomaly_map_nb, (self.args.input_size, self.args.input_size))
         anomaly_map_resized_blur = gaussian_filter(anomaly_map_resized, sigma=4)
@@ -573,9 +593,8 @@ class AC_Model(pl.LightningModule):
         anomaly_map_topk1_resized_blur = gaussian_filter(anomaly_map_topk1_resized, sigma=4)
         anomaly_map_patchcore_resized = cv2.resize(anomaly_map_patchcore, (self.args.input_size, self.args.input_size))
         anomaly_map_patchcore_resized_blur = gaussian_filter(anomaly_map_patchcore_resized, sigma=4)
-        if self.args.use_position_encoding :
-            anomaly_map_pe_resized = cv2.resize(anomaly_map_pe, (self.args.input_size, self.args.input_size))
-            anomaly_map_pe_resized_blur = gaussian_filter(anomaly_map_pe_resized, sigma=4)
+        anomaly_map_pe_resized = cv2.resize(anomaly_map_pe, (self.args.input_size, self.args.input_size))
+        anomaly_map_pe_resized_blur = gaussian_filter(anomaly_map_pe_resized, sigma=4)
         
         gt_np = gt.cpu().numpy()[0,0].astype(int)
         self.gt_list_px_lvl.extend(gt_np.ravel())
@@ -588,15 +607,14 @@ class AC_Model(pl.LightningModule):
         self.pred_list_img_lvl_patchcore.append(anomaly_img_score_patchcore)
         self.img_path_list.extend(file_name)
         self.img_type_list.append(x_type[0])
-        if self.args.use_position_encoding :
-            self.pred_list_px_lvl_pe.extend(anomaly_map_pe_resized_blur.ravel())
-            self.pred_list_img_lvl_pe.append(anomaly_img_score_pe)
+        self.pred_list_px_lvl_pe.extend(anomaly_map_pe_resized_blur.ravel())
+        self.pred_list_img_lvl_pe.append(anomaly_img_score_pe)
         
         # save images
         x = self.inv_normalize(x).clip(0,1)
         input_x = cv2.cvtColor(x.permute(0,2,3,1).cpu().numpy()[0]*255, cv2.COLOR_BGR2RGB)
         #self.save_anomaly_map(anomaly_map_resized_blur, anomaly_map_patchcore_resized_blur, input_x, gt_np*255, file_name[0], x_type[0])
-        self.save_anomaly_map(anomaly_map_resized_blur, anomaly_map_topk1_resized_blur, anomaly_map_patchcore_resized_blur, input_x, gt_np*255, file_name[0], x_type[0])
+        self.save_anomaly_map(anomaly_map_resized_blur, anomaly_map_topk1_resized_blur, anomaly_map_patchcore_resized_blur, anomaly_map_pe_resized_blur, input_x, gt_np*255, file_name[0], x_type[0])
 
     def test_epoch_end(self, outputs):
         # Total pixel-level auc-roc score
@@ -605,9 +623,8 @@ class AC_Model(pl.LightningModule):
         pixel_auc_topk1 = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl_topk1)
         # Total pixel-level auc-roc score for patchcore version
         pixel_auc_patchcore = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl_patchcore)
-        
-        if self.args.use_position_encoding :
-            pixel_auc_pe = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl_pe)
+        # Total pixel-level auc-roc score for using position encoding
+        pixel_auc_pe = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl_pe)
 
         # Total image-level auc-roc score
         img_auc = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl)
@@ -615,24 +632,16 @@ class AC_Model(pl.LightningModule):
         img_auc_topk1 = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl_topk1)
         # Total image-level auc-roc score for patchcore version
         img_auc_patchcore = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl_patchcore)
-        
-        if self.args.use_position_encoding :
-            img_auc_pe = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl_pe)
+        # Total image-level auc-roc score for using position encoding
+        img_auc_pe = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl_pe)
 
         values = {'pixel_auc': pixel_auc, 'pixel_auc_topk1': pixel_auc_topk1, 'pixel_auc_patchcore': pixel_auc_patchcore, \
-            'img_auc': img_auc, 'img_auc_topk1': img_auc_topk1, 'img_auc_patchcore': img_auc_patchcore}
-        
-        if self.args.use_position_encoding :
-            values['pixel_auc_pe'] = pixel_auc_pe
-            values['img_auc_pe'] = img_auc_pe
+                'img_auc': img_auc, 'img_auc_topk1': img_auc_topk1, 'img_auc_patchcore': img_auc_patchcore, \
+                'pixel_auc_pe' : pixel_auc_pe, 'img_auc_pe' : img_auc_pe}
         
         self.log_dict(values)
         
         f = open(os.path.join(self.args.project_root_path, "score_result.csv"), "a")
-        # data = [self.args.category, str(self.args.coreset_sampling_ratio), str(self.args.dist_coreset_size), str(self.args.dist_padding), \
-        #         str(self.args.softmax_temperature), str(self.args.prob_gamma), \
-        #         str(pixel_auc), str(pixel_auc_topk1), str(pixel_auc_patchcore), \
-        #         str(img_auc), str(img_auc_topk1), str(img_auc_patchcore)]
         data = [self.args.category, str(self.args.coreset_sampling_ratio), str(self.args.dist_coreset_size), str(self.args.dist_padding), \
                 str(self.args.softmax_temperature), str(self.args.prob_gamma), \
                 str(pixel_auc), str(pixel_auc_topk1), str(pixel_auc_patchcore), str(pixel_auc_pe), \
