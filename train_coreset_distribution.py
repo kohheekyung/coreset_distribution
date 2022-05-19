@@ -20,7 +20,7 @@ def get_args():
     parser.add_argument('--save_src_code', default=True)
     parser.add_argument('--save_anomaly_map', default=True)
     parser.add_argument('--n_neighbors', type=int, default=9)
-    parser.add_argument('--feature_model', choices=['WR50', 'R50', 'R34', 'R18', 'R101', 'R152'], default='WR50')
+    parser.add_argument('--feature_model', choices=['WR101', 'WR50', 'R50', 'R34', 'R18', 'R101', 'R152'], default='WR50')
     parser.add_argument('--block_index', choices=['1+2', '2+3', '3+4', '4', '5'], default='2+3') # '2+3' means using both block 2 and block 3
     parser.add_argument('--dist_coreset_size', type=int, default=2048) # 512
     parser.add_argument('--dist_padding', type=int, default=1)
@@ -31,7 +31,7 @@ def get_args():
     parser.add_argument('--softmax_temperature', type=float, default=1.0)
     parser.add_argument('--prob_gamma', type=float, default=0.99)
     parser.add_argument('--use_position_encoding', default=False, action='store_true', help="Whether to use position encoding")
-    parser.add_argument('--pe_weight', type=float, default=10)
+    parser.add_argument('--pe_weight', type=float, default=1)
     parser.add_argument('--not_use_coreset_distribution', default=False, action='store_true', help='Whether not to use coreset_distribution')
     parser.add_argument('--use_reflect_resize', default=False, action='store_true', help='Whether not to use reflect_resize') # Serious anomaly problem in some categories(ex. grid)
     args = parser.parse_args()

@@ -199,7 +199,9 @@ class Distribution_Dataset_Generator():
                         position_encoding[0, 0, i, j] = self.args.pe_weight * i / W
                         position_encoding[0, 1, i, j] = self.args.pe_weight * j / H
                 pe_pad = np.pad(position_encoding, pad_width, "reflect", reflect_type='odd')
-                embedding_pad = np.concatenate((embedding_pad + pe_pad[:, :1, :, :], embedding_pad + pe_pad[:, 1:, :, :]), axis = 1) # N x 2E x (W+1) x (H+1)
+                pe_pad = np.tile(pe_pad, (embedding_pad.shape[0], 1, 1, 1)).astype(np.float32)
+                embedding_pad = np.concatenate((embedding_pad, pe_pad), axis = 1) # N x 2E x (W+1) x (H+1)
+                #embedding_pad = np.concatenate((embedding_pad + pe_pad[:, :1, :, :], embedding_pad + pe_pad[:, 1:, :, :]), axis = 1) # N x 2E x (W+1) x (H+1)
             
             embedding_pad_list_, embedding_indices_list_ = self.make_embedding_list(embedding_pad, embedding_indices)
             self.embedding_pad_list.extend(embedding_pad_list_)

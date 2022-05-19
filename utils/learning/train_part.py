@@ -175,8 +175,8 @@ class Coreset(pl.LightningModule):
                     position_encoding[0, 0, i, j] = self.args.pe_weight * i / W
                     position_encoding[0, 1, i, j] = self.args.pe_weight * j / H
             position_encoding = np.tile(position_encoding, (embedding_.shape[0], 1, 1, 1)).astype(np.float32)
-            #embedding_pe = np.concatenate((embedding_, position_encoding), axis = 1)
-            embedding_pe = np.concatenate((embedding_ + position_encoding[:, :1, :, :], embedding_ + position_encoding[:, 1:, :, :]), axis = 1)
+            embedding_pe = np.concatenate((embedding_, position_encoding), axis = 1)
+            #embedding_pe = np.concatenate((embedding_ + position_encoding[:, :1, :, :], embedding_ + position_encoding[:, 1:, :, :]), axis = 1)
             self.embedding_pe_list.extend(reshape_embedding(embedding_pe))
 
     def training_epoch_end(self, outputs):
@@ -373,9 +373,8 @@ class AC_Model(pl.LightningModule):
         self.pred_list_img_lvl_patchcore = []
         self.img_path_list = []
         self.img_type_list = []
-        if self.args.use_position_encoding :
-            self.pred_list_px_lvl_pe = []
-            self.pred_list_img_lvl_pe = []
+        self.pred_list_px_lvl_pe = []
+        self.pred_list_img_lvl_pe = []
 
     def init_features(self):
         self.features = []
@@ -487,7 +486,8 @@ class AC_Model(pl.LightningModule):
             pad_width = ((0,),(self.args.dist_padding,),(self.args.dist_padding,))         
             embedding_pad = np.pad(embedding_.squeeze(), pad_width, "reflect") # E x (W+1) x (H+1)
             if self.args.use_position_encoding :
-                embedding_pad = np.concatenate((embedding_pad + self.pe_pad[:1], embedding_pad + self.pe_pad[1:]), axis = 0) # 2E x (W+1) x (H+1)    
+                embedding_pad = np.concatenate((embedding_pad, self.pe_pad), axis = 0) # 2E x (W+1) x (H+1)
+                #embedding_pad = np.concatenate((embedding_pad + self.pe_pad[:1], embedding_pad + self.pe_pad[1:]), axis = 0) # 2E x (W+1) x (H+1)    
                                 
             neighbors = np.zeros(shape=(W, H, embedding_pad.shape[0]*(pow(self.args.dist_padding*2+1, 2) - 1))) # W x H x NE
             # construct neighbor features
@@ -519,8 +519,8 @@ class AC_Model(pl.LightningModule):
         anomaly_map_pe = anomaly_map_patchcore
         if self.args.use_position_encoding :                            
             position_encoding_tile = np.tile(self.position_encoding, (embedding_.shape[0], 1, 1, 1)).astype(np.float32)
-            #embedding_pe = np.concatenate((embedding_, position_encoding), axis = 1)
-            embedding_pe = np.concatenate((embedding_ + position_encoding_tile[:, :1, :, :], embedding_ + position_encoding_tile[:, 1:, :, :]), axis = 1)
+            embedding_pe = np.concatenate((embedding_, position_encoding_tile), axis = 1)
+            #embedding_pe = np.concatenate((embedding_ + position_encoding_tile[:, :1, :, :], embedding_ + position_encoding_tile[:, 1:, :, :]), axis = 1)
             embedding_pe_test = np.array(reshape_embedding(embedding_pe)) # (W x H) x (2E)
             
             embedding_pe_score, embedding_pe_indices = self.embedding_coreset_pe_index.search(embedding_pe_test, k=self.args.n_neighbors) # (W x H) x self.args.n_neighbors
@@ -544,9 +544,8 @@ class AC_Model(pl.LightningModule):
             # anomaly_pxl_topk1 = np.zeros(shape=(neighbors.shape[0])) # (W x H)
 
             softmax_temp = F.softmax(y_hat / self.args.softmax_temperature, dim = -1).cpu().numpy() # (W x H) x self.dist_coreset_indesx.ntotal
-            softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > (10.0 / self.dist_coreset_index.ntotal) # threshold of softmax
+            softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > (5.0 / self.dist_coreset_index.ntotal) # threshold of softmax
             #softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > 0.04 # threshold of softmax
-
             distances, indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
             distances = np.sqrt(distances)
             prob_embedding = calc_prob_embedding(distances, gamma=self.args.prob_gamma)
