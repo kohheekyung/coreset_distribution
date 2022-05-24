@@ -687,8 +687,8 @@ class AC_Model(pl.LightningModule):
         f = open(os.path.join(self.args.project_root_path, "score_result.csv"), "a")
         data = [self.args.category, str(self.args.subsampling_percentage), str(self.args.dist_coreset_size), str(self.args.dist_padding), \
                 str(self.args.softmax_temperature), str(self.args.prob_gamma), \
-                str(pixel_auc), str(pixel_auc_topk1), str(pixel_auc_patchcore), str(pixel_auc_pe), \
-                str(img_auc), str(img_auc_topk1), str(img_auc_patchcore), str(img_auc_pe)]
+                str(f'{pixel_auc : .3f}'), str(f'{pixel_auc_topk1 : .3f}'), str(f'{pixel_auc_patchcore : .3f}'), str(f'{pixel_auc_pe : .3f}'), \
+                str(f'{img_auc : .3f}'), str(f'{img_auc_topk1 : .3f}'), str(f'{img_auc_patchcore : .3f}'), str(f'{img_auc_pe : .3f}')]
         data = ','.join(data) + '\n'
         f.write(data)
         f.close()

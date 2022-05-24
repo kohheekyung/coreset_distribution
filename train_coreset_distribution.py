@@ -24,12 +24,12 @@ def get_args():
     parser.add_argument('--patchcore_batchsize', type=int, default=2)
     parser.add_argument('--pretrain_embed_dimension', type=int, default=1024) # Dimensionality of features extracted from backbone layers
     parser.add_argument('--target_embed_dimension', type=int, default=1024) # final aggregated PatchCore Dimensionality
-    parser.add_argument('--anomaly_nn', type=int, default=3) # Num. nearest neighbours to use for anomaly detection
-    parser.add_argument('--patchsize', type=int, default=5) # neighbourhoodsize for local aggregation
+    parser.add_argument('--anomaly_nn', type=int, default=1) # Num. nearest neighbours to use for anomaly detection
+    parser.add_argument('--patchsize', type=int, default=3) # neighbourhoodsize for local aggregation
     parser.add_argument('--faiss_on_gpu', default=False, action='store_true', help="Whether to use gpu on faiss")
     
     # sampler
-    parser.add_argument('--subsampling_percentage', type=float, default=0.1)
+    parser.add_argument('--subsampling_percentage', '-p', type=float, default=0.1)
     
     # dataset
     parser.add_argument('--resize', type=int, default=256)
@@ -37,7 +37,7 @@ def get_args():
     
     # coreset_distribution
     parser.add_argument('--dist_coreset_size', type=int, default=2048) # 512
-    parser.add_argument('--dist_padding', type=int, default=3)
+    parser.add_argument('--dist_padding', type=int, default=4)
     parser.add_argument('--num_epochs', type=int, default=12)
     parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--step_size', type=int, default=5)
