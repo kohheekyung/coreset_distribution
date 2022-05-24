@@ -599,7 +599,7 @@ class AC_Model(pl.LightningModule):
             # anomaly_pxl_topk1 = np.zeros(shape=(neighbors.shape[0])) # (W x H)
 
             softmax_temp = F.softmax(y_hat / self.args.softmax_temperature, dim = -1).cpu().numpy() # (W x H) x self.dist_coreset_indesx.ntotal
-            softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > (5.0 / self.dist_coreset_index.ntotal) # threshold of softmax
+            softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > (1.0 / self.dist_coreset_index.ntotal) # threshold of softmax
             #softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > 0.04 # threshold of softmax
             
             distances, indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
