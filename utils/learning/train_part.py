@@ -7,6 +7,7 @@ import numpy as np
 import shutil
 import pytorch_lightning as pl
 import faiss
+import copy
 from sklearn.random_projection import SparseRandomProjection
 from utils.sampling_methods.kcenter_greedy import kCenterGreedy
 from scipy.ndimage import gaussian_filter
@@ -17,6 +18,8 @@ from utils.common.visualize import visualize_TSNE
 from utils.data.transforms import INV_Normalize
 from utils.common.embedding import embedding_concat, reshape_embedding
 from utils.learning.model import Distribution_Model
+from utils.common.image_processing import PatchMaker, ForwardHook, LastLayerToExtractReachedException
+from utils.common.backbones import Backbone
 
 def min_max_norm(image):
     a_min, a_max = image.min(), image.max()
@@ -49,7 +52,7 @@ def copy_files(src, dst, ignores=[]):
 def prep_dirs(root, args):
     # make embeddings dir
     # embeddings_path = os.path.join(root, 'embeddings')
-    embeddings_path = os.path.join('./', f'embeddings_{args.block_index}', args.category)
+    embeddings_path = os.path.join('./', f'embeddings_{"+".join(args.layer_index)}', args.category)
     os.makedirs(embeddings_path, exist_ok=True)
     # make sample dir
     sample_path = os.path.join(root, 'sample')
@@ -90,107 +93,133 @@ class Coreset(pl.LightningModule):
         super(Coreset, self).__init__()
 
         self.args = args
-
-        self.init_features()        
-        def hook_t(module, input, output):
-            self.features.append(output)
+        
+        self.backbone = Backbone(args.backbone) # load pretrained backbone model
+        
+        self.patch_maker = PatchMaker(args.patchsize, stride=1)
             
-        if args.feature_model == 'R152' :
-            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet152', pretrained=True)
-        elif args.feature_model == 'R101' :
-            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet101', pretrained=True)
-        elif args.feature_model == 'R18' :
-            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=True)
-        elif args.feature_model == 'R34' :
-            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet34', pretrained=True)
-        elif args.feature_model == 'R50' :
-            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet50', pretrained=True)
-        elif args.feature_model == 'WR50' :
-            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'wide_resnet50_2', pretrained=True)
-        elif args.feature_model == 'WR101' :
-            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'wide_resnet101_2', pretrained=True)
+        if not hasattr(self.backbone, "hook_handles"):
+            self.backbone.hook_handles = []
+        for handle in self.backbone.hook_handles:
+            handle.remove()
+        self.outputs = {}
+            
+        for extract_layer in args.layer_index :
+            forward_hook = ForwardHook(
+                self.outputs, extract_layer, args.layer_index[-1]
+            )
+            network_layer = self.backbone.__dict__["_modules"][extract_layer]
+            
+            if isinstance(network_layer, torch.nn.Sequential):
+                self.backbone.hook_handles.append(
+                    network_layer[-1].register_forward_hook(forward_hook)
+                )
+            else:
+                self.backbone.hook_handles.append(
+                    network_layer.register_forward_hook(forward_hook)
+                )
 
-        for param in self.feature_model.parameters():
-            param.requires_grad = False
-
-        if args.block_index == '1+2' :
-            self.feature_model.layer1[-1].register_forward_hook(hook_t)
-            self.feature_model.layer2[-1].register_forward_hook(hook_t)
-        elif args.block_index == '2+3' :
-            self.feature_model.layer2[-1].register_forward_hook(hook_t)
-            self.feature_model.layer3[-1].register_forward_hook(hook_t)
-        elif args.block_index == '3+4' :
-            self.feature_model.layer3[-1].register_forward_hook(hook_t)
-            self.feature_model.layer4[-1].register_forward_hook(hook_t)
-        elif args.block_index == '5' :
-            self.feature_model.avgpool.register_forward_hook(hook_t)
-        elif args.block_index == '4' :
-            self.feature_model.layer4[-1].register_forward_hook(hook_t)
-
-    def init_features(self):
-        self.features = []
-
-    def forward(self, x_t):
-        self.init_features()
-        _ = self.feature_model(x_t)
-        return self.features
+    def forward(self, images):
+        self.outputs.clear()
+        with torch.no_grad():
+            # The backbone will throw an Exception once it reached the last
+            # layer to compute features from. Computation will stop there.
+            try:
+                _ = self.backbone(images)
+            except LastLayerToExtractReachedException:
+                pass
+        return self.outputs
 
     def on_train_start(self):
-        self.feature_model.eval()
-        self.embedding_dir_path = os.path.join('./', f'embeddings_{self.args.block_index}', self.args.category)
+        self.backbone.eval()
+        self.embedding_dir_path = os.path.join('./', f'embeddings_{"+".join(self.args.layer_index)}', self.args.category)
         os.makedirs(self.embedding_dir_path, exist_ok=True)
         self.embedding_list = []
         self.embedding_pe_list = []
 
     def training_step(self, batch, batch_idx):
         x, _, _, file_name, _ = batch
-
-        if self.args.use_reflect_resize :
-            pad_width = (self.args.load_size - self.args.input_size) // 2
-            pad = (pad_width, pad_width, pad_width, pad_width) # pad last dim by (pad_width, pad_width) and 2nd to last by (pad_width, pad_width)
-            x_padding = F.pad(x, pad, "reflect")
-            x_padding = TF.resize(x_padding, (self.args.input_size, self.args.input_size))
-            features = self(x_padding)            
-        else :
-            features = self(x)
         
-        if '+' in self.args.block_index :        
-            embeddings = []
-            m = torch.nn.AvgPool2d(3, 1, 1)
-            for feature in features:               
-                embeddings.append(m(feature))
-            embedding_ = np.array(embedding_concat(embeddings[0], embeddings[1]))
-        else :
-            embedding_ = np.array(features[0].cpu())
-        if self.args.use_reflect_resize :
-            crop_pad = int(embedding_.shape[-1] * (self.args.load_size - self.args.input_size) / self.args.input_size / 2)
-            embedding_ = embedding_[:, :, crop_pad:-crop_pad, crop_pad:-crop_pad]
-        self.embedding_list.extend(reshape_embedding(embedding_))
+        batchsize = x.shape[0]
+           
+        features = self(x)            
+        features = [features[layer] for layer in self.args.layer_index]        
+        features = [
+            self.patch_maker.patchify(x, return_spatial_info=True) for x in features
+        ]
+        
+        patch_shapes = [x[1] for x in features]
+        features = [x[0] for x in features]
+        ref_num_patches = patch_shapes[0]
+        
+        for i in range(1, len(features)):
+            _features = features[i]
+            patch_dims = patch_shapes[i]
+
+            _features = _features.reshape(
+                _features.shape[0], patch_dims[0], patch_dims[1], *_features.shape[2:]
+            )
+            _features = _features.permute(0, -3, -2, -1, 1, 2)
+            perm_base_shape = _features.shape
+            _features = _features.reshape(-1, *_features.shape[-2:])
+            _features = F.interpolate(
+                _features.unsqueeze(1),
+                size=(ref_num_patches[0], ref_num_patches[1]),
+                mode="bilinear",
+                align_corners=False,
+            )
+            _features = _features.squeeze(1)
+            _features = _features.reshape(
+                *perm_base_shape[:-2], ref_num_patches[0], ref_num_patches[1]
+            )
+            _features = _features.permute(0, -2, -1, 1, 2, 3)
+            _features = _features.reshape(len(_features), -1, *_features.shape[-3:])
+            features[i] = _features
+        features = [x.reshape(-1, *x.shape[-3:]) for x in features]
+        
+        # preprocessing
+        _features = []
+        for feature in features : 
+            feature = feature.reshape(len(feature), 1, -1)
+            _features.append(F.adaptive_avg_pool1d(feature, self.args.pretrain_embed_dimension).squeeze(1))
+            
+        features = torch.stack(_features, dim=1)
+        
+        # preadapt aggregator
+        _features = features.reshape(len(features), 1, -1)
+        _features = F.adaptive_avg_pool1d(_features, self.args.target_embed_dimension)
+        features = _features.reshape(len(features), -1)
+        
+        self.embedding_list.extend([x.detach().cpu().numpy() for x in features])
 
         if self.args.use_position_encoding :
-            W, H = embedding_.shape[2:]
-            position_encoding = np.zeros(shape=(1, 2, W, H))
+            W, H = ref_num_patches
+            position_encoding = np.zeros(shape=(1, W, H, 2))
             for i in range(W) :
                 for j in range(H) : 
-                    position_encoding[0, 0, i, j] = self.args.pe_weight * i / W
-                    position_encoding[0, 1, i, j] = self.args.pe_weight * j / H
-            position_encoding = np.tile(position_encoding, (embedding_.shape[0], 1, 1, 1)).astype(np.float32)
-            embedding_pe = np.concatenate((embedding_, position_encoding), axis = 1)
-            #embedding_pe = np.concatenate((embedding_ + position_encoding[:, :1, :, :], embedding_ + position_encoding[:, 1:, :, :]), axis = 1)
-            self.embedding_pe_list.extend(reshape_embedding(embedding_pe))
+                    position_encoding[0, i, j, 0] = self.args.pe_weight * i / W
+                    position_encoding[0, i, j, 1] = self.args.pe_weight * j / H
+                    
+            position_encoding = position_encoding.reshape(-1, 2)
+            position_encoding = np.tile(position_encoding, (batchsize, 1)).astype(np.float32)
+
+            features_pe = np.concatenate((features.detach().cpu().numpy(), position_encoding), axis = 1)
+            
+            self.embedding_pe_list.extend([x for x in features_pe])
 
     def training_epoch_end(self, outputs):
         total_embeddings = np.array(self.embedding_list)
         # Random projection
-        self.randomprojector = SparseRandomProjection(n_components='auto', eps=0.9) # 'auto' => Johnson-Lindenstrauss lemma
+        #self.randomprojector = SparseRandomProjection(n_components='auto', eps=0.9) # 'auto' => Johnson-Lindenstrauss lemma
+        self.randomprojector = SparseRandomProjection(n_components=128) 
         self.randomprojector.fit(total_embeddings)
         
         # Coreset Subsampling
-        embedding_coreset_size = int(self.args.coreset_sampling_ratio * total_embeddings.shape[0])
+        embedding_coreset_size = int(self.args.subsampling_percentage * total_embeddings.shape[0])
         dist_coreset_size = self.args.dist_coreset_size
-        select_batch_size = max(embedding_coreset_size, dist_coreset_size)
+        max_coreset_size = max(embedding_coreset_size, dist_coreset_size)
 
-        selector = kCenterGreedy(embedding=torch.Tensor(total_embeddings), sampling_size=select_batch_size)
+        selector = kCenterGreedy(embedding=torch.Tensor(total_embeddings), sampling_size=max_coreset_size)
         selected_idx = selector.select_coreset_idxs()
         self.embedding_coreset = total_embeddings[selected_idx][:embedding_coreset_size]
         self.dist_coreset = total_embeddings[selected_idx][:dist_coreset_size]
@@ -202,7 +231,7 @@ class Coreset(pl.LightningModule):
         #faiss
         self.embedding_coreset_index = faiss.IndexFlatL2(self.embedding_coreset.shape[1])
         self.embedding_coreset_index.add(self.embedding_coreset)
-        faiss.write_index(self.embedding_coreset_index, os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.coreset_sampling_ratio*100)}.faiss'))
+        faiss.write_index(self.embedding_coreset_index, os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.subsampling_percentage*100)}.faiss'))
 
         self.dist_coreset_index = faiss.IndexFlatL2(self.dist_coreset.shape[1])
         self.dist_coreset_index.add(self.dist_coreset)
@@ -211,15 +240,16 @@ class Coreset(pl.LightningModule):
         if self.args.use_position_encoding : 
             total_embeddings_pe = np.array(self.embedding_pe_list)
             # Random projection
-            self.randomprojector = SparseRandomProjection(n_components='auto', eps=0.9) # 'auto' => Johnson-Lindenstrauss lemma
+            # self.randomprojector = SparseRandomProjection(n_components='auto', eps=0.9) # 'auto' => Johnson-Lindenstrauss lemma
+            self.randomprojector = SparseRandomProjection(n_components=128) 
             self.randomprojector.fit(total_embeddings_pe)
             
             # Coreset Subsampling
-            embedding_coreset_size = int(self.args.coreset_sampling_ratio * total_embeddings_pe.shape[0])
+            embedding_coreset_size = int(self.args.subsampling_percentage * total_embeddings_pe.shape[0])
             dist_coreset_size = self.args.dist_coreset_size
-            select_batch_size = max(embedding_coreset_size, dist_coreset_size)
+            max_coreset_size = max(embedding_coreset_size, dist_coreset_size)
 
-            selector = kCenterGreedy(embedding=torch.Tensor(total_embeddings_pe), sampling_size=select_batch_size)
+            selector = kCenterGreedy(embedding=torch.Tensor(total_embeddings_pe), sampling_size=max_coreset_size)
             selected_idx = selector.select_coreset_idxs()
             self.embedding_coreset = total_embeddings_pe[selected_idx][:embedding_coreset_size]
             self.dist_coreset = total_embeddings_pe[selected_idx][:dist_coreset_size]
@@ -231,7 +261,7 @@ class Coreset(pl.LightningModule):
             #faiss
             self.embedding_coreset_index = faiss.IndexFlatL2(self.embedding_coreset.shape[1])
             self.embedding_coreset_index.add(self.embedding_coreset)
-            faiss.write_index(self.embedding_coreset_index, os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.coreset_sampling_ratio*100)}_pe.faiss'))
+            faiss.write_index(self.embedding_coreset_index, os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.subsampling_percentage*100)}_pe.faiss'))
 
             self.dist_coreset_index = faiss.IndexFlatL2(self.dist_coreset.shape[1])
             self.dist_coreset_index.add(self.dist_coreset)
@@ -246,7 +276,7 @@ class Distribution(pl.LightningModule):
 
         self.args = args
         self.model = Distribution_Model(args, dist_input_size, dist_output_size)
-        self.embedding_dir_path = os.path.join('./', f'embeddings_{self.args.block_index}', self.args.category)
+        self.embedding_dir_path = os.path.join('./', f'embeddings_{"+".join(self.args.layer_index)}', self.args.category)
         os.makedirs(self.embedding_dir_path, exist_ok=True)
         self.best_val_loss=1e+6
         
@@ -256,8 +286,7 @@ class Distribution(pl.LightningModule):
         self.val_size = 0
 
     def forward(self, x):
-        x = self.model(x)
-        return x
+        return self.model(x)
     
     def on_train_epoch_start(self):
         self.train_loss = 0.0
@@ -316,47 +345,36 @@ class AC_Model(pl.LightningModule):
         
         self.save_hyperparameters(args)
         self.args = args
+        
+        self.backbone = Backbone(args.backbone) # load pretrained backbone model
 
-        self.init_features()
-        def hook_t(module, input, output):
-            self.features.append(output)
+        self.patch_maker = PatchMaker(args.patchsize, stride=1)
             
-        if args.feature_model == 'R152' :
-            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet152', pretrained=True)
-        elif args.feature_model == 'R101' :
-            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet101', pretrained=True)
-        elif args.feature_model == 'R18' :
-            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=True)
-        elif args.feature_model == 'R34' :
-            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet34', pretrained=True)
-        elif args.feature_model == 'R50' :
-            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet50', pretrained=True)
-        elif args.feature_model == 'WR50' :
-            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'wide_resnet50_2', pretrained=True)
-        elif args.feature_model == 'WR101' :
-            self.feature_model = torch.hub.load('pytorch/vision:v0.10.0', 'wide_resnet101_2', pretrained=True)
-
-        for param in self.feature_model.parameters():
-            param.requires_grad = False
-
-        if args.block_index == '1+2' :
-            self.feature_model.layer1[-1].register_forward_hook(hook_t)
-            self.feature_model.layer2[-1].register_forward_hook(hook_t)
-        elif args.block_index == '2+3' :
-            self.feature_model.layer2[-1].register_forward_hook(hook_t)
-            self.feature_model.layer3[-1].register_forward_hook(hook_t)
-        elif args.block_index == '3+4' :
-            self.feature_model.layer3[-1].register_forward_hook(hook_t)
-            self.feature_model.layer4[-1].register_forward_hook(hook_t)
-        elif args.block_index == '5' :
-            self.feature_model.avgpool.register_forward_hook(hook_t)
-        elif args.block_index == '4' :
-            self.feature_model.layer4[-1].register_forward_hook(hook_t)
+        if not hasattr(self.backbone, "hook_handles"):
+            self.backbone.hook_handles = []
+        for handle in self.backbone.hook_handles:
+            handle.remove()
+        self.outputs = {}
+            
+        for extract_layer in args.layer_index :
+            forward_hook = ForwardHook(
+                self.outputs, extract_layer, args.layer_index[-1]
+            )
+            network_layer = self.backbone.__dict__["_modules"][extract_layer]
+            
+            if isinstance(network_layer, torch.nn.Sequential):
+                self.backbone.hook_handles.append(
+                    network_layer[-1].register_forward_hook(forward_hook)
+                )
+            else:
+                self.backbone.hook_handles.append(
+                    network_layer.register_forward_hook(forward_hook)
+                )
 
         self.init_results_list()
 
         self.inv_normalize = INV_Normalize()
-        self.embedding_dir_path = os.path.join('./', f'embeddings_{self.args.block_index}', self.args.category)
+        self.embedding_dir_path = os.path.join('./', f'embeddings_{"+".join(self.args.layer_index)}', self.args.category)
         
         if not args.not_use_coreset_distribution:
             self.dist_model = Distribution_Model(args, dist_input_size, dist_output_size)        
@@ -367,22 +385,25 @@ class AC_Model(pl.LightningModule):
         self.pred_list_px_lvl = []
         self.pred_list_px_lvl_topk1 = []
         self.pred_list_px_lvl_patchcore = []
+        self.pred_list_px_lvl_pe = []
         self.gt_list_img_lvl = []
         self.pred_list_img_lvl = []
         self.pred_list_img_lvl_topk1 = []
         self.pred_list_img_lvl_patchcore = []
+        self.pred_list_img_lvl_pe = []
         self.img_path_list = []
         self.img_type_list = []
-        self.pred_list_px_lvl_pe = []
-        self.pred_list_img_lvl_pe = []
 
-    def init_features(self):
-        self.features = []
-
-    def forward(self, x_t):
-        self.init_features()
-        _ = self.feature_model(x_t)
-        return self.features
+    def forward(self, images):
+        self.outputs.clear()
+        with torch.no_grad():
+            # The backbone will throw an Exception once it reached the last
+            # layer to compute features from. Computation will stop there.
+            try:
+                _ = self.backbone(images)
+            except LastLayerToExtractReachedException:
+                pass
+        return self.outputs
 
     def save_anomaly_map(self, anomaly_map, anomaly_map_topk1, anomaly_map_patchcore, anomaly_map_pe, input_img, gt_img, file_name, x_type):
         if anomaly_map.shape != input_img.shape:
@@ -419,24 +440,22 @@ class AC_Model(pl.LightningModule):
         return None
     
     def on_test_start(self):
-        self.feature_model.eval() # to stop running_var move (maybe not critical)
+        self.backbone.eval() # to stop running_var move (maybe not critical)
         if not self.args.not_use_coreset_distribution:
             self.dist_model.eval() # to stop running_var move (maybe not critical)
         
         self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
-        self.embedding_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.coreset_sampling_ratio*100)}.faiss'))
+        self.embedding_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.subsampling_percentage*100)}.faiss'))
         if torch.cuda.is_available():
             res = faiss.StandardGpuResources()
-            self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.dist_coreset_index)
-            self.embedding_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.embedding_coreset_index)
+            self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0, self.dist_coreset_index)
+            self.embedding_coreset_index = faiss.index_cpu_to_gpu(res, 0, self.embedding_coreset_index)
 
-        if self.args.use_position_encoding : 
-            #self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
-            self.embedding_coreset_pe_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.coreset_sampling_ratio*100)}_pe.faiss'))
+        if self.args.use_position_encoding :
+            self.embedding_coreset_pe_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.subsampling_percentage*100)}_pe.faiss'))
             if torch.cuda.is_available():
                 res = faiss.StandardGpuResources()
-                #self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0 ,self.dist_coreset_index)
-                self.embedding_coreset_pe_index = faiss.index_cpu_to_gpu(res, 0 ,self.embedding_coreset_pe_index)
+                self.embedding_coreset_pe_index = faiss.index_cpu_to_gpu(res, 0, self.embedding_coreset_pe_index)
 
         self.init_results_list()
         self.embedding_dir_path, self.sample_path, self.source_code_save_path = prep_dirs(self.logger.log_dir, self.args)
@@ -446,50 +465,81 @@ class AC_Model(pl.LightningModule):
     def test_step(self, batch, batch_idx): # Nearest Neighbour Search
         x, gt, label, file_name, x_type = batch
         
-        # extract embedding
-        if self.args.use_reflect_resize :
-            pad_width = (self.args.load_size - self.args.input_size) // 2
-            pad = (pad_width, pad_width, pad_width, pad_width) # pad last dim by (pad_width, pad_width) and 2nd to last by (pad_width, pad_width)
-            x_padding = F.pad(x, pad, "reflect")
-            x_padding = TF.resize(x_padding, (self.args.input_size, self.args.input_size))
-            features = self(x_padding)
-        else :
-            features = self(x)
+        batchsize = x.shape[0]
         
-        if '+' in self.args.block_index : 
-            embeddings = []
-            m = torch.nn.AvgPool2d(3, 1, 1)
-            for feature in features:
-                embeddings.append(m(feature))
-            embedding_ = np.array(embedding_concat(embeddings[0], embeddings[1])) # 1 x E x W x H
-        else :
-            embedding_ = np.array(features[0].cpu())
+        features = self(x)
             
-        if self.args.use_reflect_resize :
-            crop_pad = int(embedding_.shape[-1] * (self.args.load_size - self.args.input_size) / self.args.input_size / 2)
-            embedding_ = embedding_[:, :, crop_pad:-crop_pad, crop_pad:-crop_pad]
-        embedding_test = np.array(reshape_embedding(embedding_)) # (W x H) x E
+        features = [features[layer] for layer in self.args.layer_index]
+        
+        features = [
+            self.patch_maker.patchify(x, return_spatial_info=True) for x in features
+        ]
+        
+        patch_shapes = [x[1] for x in features]
+        features = [x[0] for x in features]
+        ref_num_patches = patch_shapes[0]
+        
+        for i in range(1, len(features)):
+            _features = features[i]
+            patch_dims = patch_shapes[i]
 
-        W, H = embedding_.shape[2:]
+            _features = _features.reshape(
+                _features.shape[0], patch_dims[0], patch_dims[1], *_features.shape[2:]
+            )
+            _features = _features.permute(0, -3, -2, -1, 1, 2)
+            perm_base_shape = _features.shape
+            _features = _features.reshape(-1, *_features.shape[-2:])
+            _features = F.interpolate(
+                _features.unsqueeze(1),
+                size=(ref_num_patches[0], ref_num_patches[1]),
+                mode="bilinear",
+                align_corners=False,
+            )
+            _features = _features.squeeze(1)
+            _features = _features.reshape(
+                *perm_base_shape[:-2], ref_num_patches[0], ref_num_patches[1]
+            )
+            _features = _features.permute(0, -2, -1, 1, 2, 3)
+            _features = _features.reshape(len(_features), -1, *_features.shape[-3:])
+            features[i] = _features
+        features = [x.reshape(-1, *x.shape[-3:]) for x in features]
+        
+        # preprocessing
+        _features = []
+        for feature in features : 
+            feature = feature.reshape(len(feature), 1, -1)
+            _features.append(F.adaptive_avg_pool1d(feature, self.args.pretrain_embed_dimension).squeeze(1))
+            
+        features = torch.stack(_features, dim=1)
+        
+        # preadapt aggregator
+        features = features.reshape(len(features), 1, -1)
+        features = F.adaptive_avg_pool1d(features, self.args.target_embed_dimension)
+        features = features.reshape(len(features), -1)
+            
+        embedding_test = features.detach().cpu().numpy() # (W x H) x E
+
+        W, H = ref_num_patches
         
         if self.position_encoding is None :
-            self.position_encoding = np.zeros(shape=(1, 2, W, H)) # 1 x 2 x W x H
+            self.position_encoding = np.zeros(shape=(1, W, H, 2)) # 1 x W x H x 2
             for i in range(W) :
                 for j in range(H) : 
-                    self.position_encoding[0, 0, i, j] = self.args.pe_weight * i / W
-                    self.position_encoding[0, 1, i, j] = self.args.pe_weight * j / H
+                    self.position_encoding[0, i, j, 0] = self.args.pe_weight * i / W
+                    self.position_encoding[0, i, j, 1] = self.args.pe_weight * j / H
+                    
         if self.pe_pad is None :
-            pad_width = ((0,),(self.args.dist_padding,),(self.args.dist_padding,))
-            self.pe_pad = np.pad(self.position_encoding.squeeze(0), pad_width, "reflect", reflect_type='odd') # 2 x (W+1) x (H+1)       
+            pad_width = ((self.args.dist_padding,),(self.args.dist_padding,), (0,))
+            self.pe_pad = np.pad(self.position_encoding.squeeze(0), pad_width, "reflect", reflect_type='odd') # (W+1) x (H+1) x 2
             
         if not self.args.not_use_coreset_distribution:
-            pad_width = ((0,),(self.args.dist_padding,),(self.args.dist_padding,))         
-            embedding_pad = np.pad(embedding_.squeeze(), pad_width, "reflect") # E x (W+1) x (H+1)
+            pad_width = ((self.args.dist_padding,),(self.args.dist_padding,), (0,))         
+            embedding_pad = np.pad(embedding_test.reshape(W, H, -1), pad_width, "reflect") # (W+1) x (H+1) x E
             if self.args.use_position_encoding :
-                embedding_pad = np.concatenate((embedding_pad, self.pe_pad), axis = 0) # 2E x (W+1) x (H+1)
+                embedding_pad = np.concatenate((embedding_pad, self.pe_pad), axis = 2) # (W+1) x (H+1) x (E+2)
                 #embedding_pad = np.concatenate((embedding_pad + self.pe_pad[:1], embedding_pad + self.pe_pad[1:]), axis = 0) # 2E x (W+1) x (H+1)    
                                 
-            neighbors = np.zeros(shape=(W, H, embedding_pad.shape[0]*(pow(self.args.dist_padding*2+1, 2) - 1))) # W x H x NE
+            neighbors = np.zeros(shape=(W, H, embedding_pad.shape[2]*(pow(self.args.dist_padding*2+1, 2) - 1))) # W x H x NE
             # construct neighbor features
             for i_idx in range(W) :
                 for j_idx in range(H) :
@@ -498,40 +548,44 @@ class AC_Model(pl.LightningModule):
                         for dj in range(-self.args.dist_padding, self.args.dist_padding+1) :
                             if di == 0 and dj == 0 :
                                 continue
-                            neighbor = np.concatenate((neighbor, embedding_pad[:, i_idx+di+self.args.dist_padding, j_idx+dj+self.args.dist_padding]))
+                            neighbor = np.concatenate((neighbor, embedding_pad[i_idx+di+self.args.dist_padding, j_idx+dj+self.args.dist_padding]))
                     neighbors[i_idx, j_idx] = neighbor
 
-        reshape_size = (W, H)
-
         ## patchcore        
-        embedding_score, embedding_indices = self.embedding_coreset_index.search(embedding_test, k=self.args.n_neighbors) # (W x H) x self.args.n_neighbors
+        embedding_score, embedding_indices = self.embedding_coreset_index.search(embedding_test, k=self.args.anomaly_nn) # (W x H) x self.args.n_neighbors
         embedding_score = np.sqrt(embedding_score)
         
         max_anomaly_idx = np.argmax(embedding_score[:, 0])
         max_embedding_score = embedding_score[max_anomaly_idx, 0] # maximum embedding score
-        weights_from_code = 1 - 1 / np.sum(np.exp(embedding_score[max_anomaly_idx] - max_embedding_score))
+        if self.args.anomaly_nn == 1 :
+            weights_from_code = 1
+        else :
+            weights_from_code = 1 - np.exp(max_embedding_score) / np.sum(np.exp(embedding_score[max_anomaly_idx]))
 
         anomaly_img_score_patchcore = weights_from_code * max_embedding_score # Image-level score
-        anomaly_map_patchcore = embedding_score[:, 0].reshape(reshape_size)
+        #anomaly_img_score_patchcore = max_embedding_score # Image-level score
+        anomaly_map_patchcore = embedding_score[:, 0].reshape(ref_num_patches)
         
         ## patchcore using position encoding
         anomaly_img_score_pe = anomaly_img_score_patchcore
         anomaly_map_pe = anomaly_map_patchcore
-        if self.args.use_position_encoding :                            
-            position_encoding_tile = np.tile(self.position_encoding, (embedding_.shape[0], 1, 1, 1)).astype(np.float32)
-            embedding_pe = np.concatenate((embedding_, position_encoding_tile), axis = 1)
-            #embedding_pe = np.concatenate((embedding_ + position_encoding_tile[:, :1, :, :], embedding_ + position_encoding_tile[:, 1:, :, :]), axis = 1)
-            embedding_pe_test = np.array(reshape_embedding(embedding_pe)) # (W x H) x (2E)
-            
-            embedding_pe_score, embedding_pe_indices = self.embedding_coreset_pe_index.search(embedding_pe_test, k=self.args.n_neighbors) # (W x H) x self.args.n_neighbors
+        if self.args.use_position_encoding :
+            position_encoding_reshape = self.position_encoding.reshape(-1, 2)
+            embedding_pe_test = np.concatenate((embedding_test, position_encoding_reshape), axis = 1).astype(np.float32)
+
+            embedding_pe_score, embedding_pe_indices = self.embedding_coreset_pe_index.search(embedding_pe_test, k=self.args.anomaly_nn) # (W x H) x self.args.n_neighbors
             embedding_pe_score = np.sqrt(embedding_pe_score)
             
             max_anomaly_idx = np.argmax(embedding_pe_score[:, 0])
             max_embedding_score = embedding_pe_score[max_anomaly_idx, 0] # maximum embedding score
-            weights_from_code = 1 - 1 / np.sum(np.exp(embedding_pe_score[max_anomaly_idx] - max_embedding_score))
+            if self.args.anomaly_nn == 1 :
+                weights_from_code = 1
+            else :
+                weights_from_code = 1 - np.exp(max_embedding_score) / np.sum(np.exp(embedding_pe_score[max_anomaly_idx]))
 
             anomaly_img_score_pe= weights_from_code * max_embedding_score # Image-level score
-            anomaly_map_pe = embedding_pe_score[:, 0].reshape(reshape_size)
+            #anomaly_img_score_pe= max_embedding_score # Image-level score
+            anomaly_map_pe = embedding_pe_score[:, 0].reshape(ref_num_patches)
 
         ## using neighbor distribution
         anomaly_img_score_nb = anomaly_img_score_topk1 = anomaly_img_score_patchcore
@@ -539,6 +593,7 @@ class AC_Model(pl.LightningModule):
         if not self.args.not_use_coreset_distribution:
             neighbors = neighbors.reshape(-1, neighbors.shape[2]).astype(np.float32) # (W x H) x NE
             y_hat = self.dist_model(torch.tensor(neighbors).cuda()).cpu() # (W x H) x self.dist_coreset_index.ntotal
+            
             anomaly_pxl_likelihood = np.zeros(shape=(neighbors.shape[0])) # (W x H)
             anomaly_pxl_topk1 = np.ones(shape=(neighbors.shape[0])) * 1e+6 # (W x H)
             # anomaly_pxl_topk1 = np.zeros(shape=(neighbors.shape[0])) # (W x H)
@@ -546,12 +601,10 @@ class AC_Model(pl.LightningModule):
             softmax_temp = F.softmax(y_hat / self.args.softmax_temperature, dim = -1).cpu().numpy() # (W x H) x self.dist_coreset_indesx.ntotal
             softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > (5.0 / self.dist_coreset_index.ntotal) # threshold of softmax
             #softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > 0.04 # threshold of softmax
+            
             distances, indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
             distances = np.sqrt(distances)
             prob_embedding = calc_prob_embedding(distances, gamma=self.args.prob_gamma)
-            softmax_dist = np.exp(-distances * self.args.prob_gamma) / np.sum(np.exp(-distances * self.args.prob_gamma), axis = -1).reshape(-1, 1)
-            #distances = distances * (softmax_dist)
-            prob_embedding = prob_embedding * softmax_dist
             
             softmax_temp_inverse = np.zeros_like(softmax_temp)
             softmax_thres_inverse = np.zeros_like(softmax_thres)
@@ -562,37 +615,28 @@ class AC_Model(pl.LightningModule):
                     
             anomaly_pxl_likelihood = np.sum(distances * softmax_temp_inverse, axis = 1)
             anomaly_pxl_topk1 = np.apply_along_axis(lambda a : np.min(a[a!=0]), 1, distances * softmax_thres_inverse)
-            # topk1_index = np.argmax(softmax_temp, axis = 1)
-            # for i in range(neighbors.shape[0]) :
-            #     anomaly_pxl_topk1[i] = distances[i, 0] 
 
-            # for i in range(neighbors.shape[0]) :
-            #     for k in range(self.dist_coreset_index.ntotal) :
-            #         anomaly_pxl_likelihood[i] += distances[i, k] * softmax_temp[i, indices[i, k]]
-            #         if softmax_thres[i, indices[i, k]] == True :
-            #             anomaly_pxl_topk1[i] = min(anomaly_pxl_topk1[i], distances[i, k])
-
-            # anomaly_pxl_score = -np.log(anomaly_pxl_likelihood).reshape(reshape_size)
-            anomaly_pxl_score = anomaly_pxl_likelihood.reshape(reshape_size)
-            # anomaly_pxl_score = distances[:, 0].reshape(reshape_size)
+            # anomaly_pxl_score = -np.log(anomaly_pxl_likelihood).reshape(ref_num_patches)
+            anomaly_pxl_score = anomaly_pxl_likelihood.reshape(ref_num_patches)
+            # anomaly_pxl_score = distances[:, 0].reshape(ref_num_patches)
             anomaly_img_score_nb = np.max(anomaly_pxl_score)
             anomaly_map_nb = anomaly_pxl_score
 
             # anomaly_img_score_topk1 = anomaly_img_score_nb
             # anomaly_map_topk1 = anomaly_map_nb
             # anomaly_pxl_topk1 = prob_embedding[:, 0]
-            # anomaly_map_topk1 = -np.log(anomaly_pxl_topk1).reshape(reshape_size)
-            # anomaly_map_topk1 = distances[:, 0].reshape(reshape_size)
-            anomaly_map_topk1 = anomaly_pxl_topk1.reshape(reshape_size)
+            # anomaly_map_topk1 = -np.log(anomaly_pxl_topk1).reshape(ref_num_patches)
+            # anomaly_map_topk1 = distances[:, 0].reshape(ref_num_patches)
+            anomaly_map_topk1 = anomaly_pxl_topk1.reshape(ref_num_patches)
             anomaly_img_score_topk1 = np.max(anomaly_map_topk1)
                 
-        anomaly_map_resized = cv2.resize(anomaly_map_nb, (self.args.input_size, self.args.input_size))
+        anomaly_map_resized = cv2.resize(anomaly_map_nb, (self.args.imagesize, self.args.imagesize))
         anomaly_map_resized_blur = gaussian_filter(anomaly_map_resized, sigma=4)
-        anomaly_map_topk1_resized = cv2.resize(anomaly_map_topk1, (self.args.input_size, self.args.input_size))
+        anomaly_map_topk1_resized = cv2.resize(anomaly_map_topk1, (self.args.imagesize, self.args.imagesize))
         anomaly_map_topk1_resized_blur = gaussian_filter(anomaly_map_topk1_resized, sigma=4)
-        anomaly_map_patchcore_resized = cv2.resize(anomaly_map_patchcore, (self.args.input_size, self.args.input_size))
+        anomaly_map_patchcore_resized = cv2.resize(anomaly_map_patchcore, (self.args.imagesize, self.args.imagesize))
         anomaly_map_patchcore_resized_blur = gaussian_filter(anomaly_map_patchcore_resized, sigma=4)
-        anomaly_map_pe_resized = cv2.resize(anomaly_map_pe, (self.args.input_size, self.args.input_size))
+        anomaly_map_pe_resized = cv2.resize(anomaly_map_pe, (self.args.imagesize, self.args.imagesize))
         anomaly_map_pe_resized_blur = gaussian_filter(anomaly_map_pe_resized, sigma=4)
         
         gt_np = gt.cpu().numpy()[0,0].astype(int)
@@ -609,11 +653,11 @@ class AC_Model(pl.LightningModule):
         self.pred_list_px_lvl_pe.extend(anomaly_map_pe_resized_blur.ravel())
         self.pred_list_img_lvl_pe.append(anomaly_img_score_pe)
         
-        # save images
-        x = self.inv_normalize(x).clip(0,1)
-        input_x = cv2.cvtColor(x.permute(0,2,3,1).cpu().numpy()[0]*255, cv2.COLOR_BGR2RGB)
-        #self.save_anomaly_map(anomaly_map_resized_blur, anomaly_map_patchcore_resized_blur, input_x, gt_np*255, file_name[0], x_type[0])
-        self.save_anomaly_map(anomaly_map_resized_blur, anomaly_map_topk1_resized_blur, anomaly_map_patchcore_resized_blur, anomaly_map_pe_resized_blur, input_x, gt_np*255, file_name[0], x_type[0])
+        if self.args.save_anomaly_map :
+            # save images
+            x = self.inv_normalize(x).clip(0,1)
+            input_x = cv2.cvtColor(x.permute(0,2,3,1).cpu().numpy()[0]*255, cv2.COLOR_BGR2RGB)
+            self.save_anomaly_map(anomaly_map_resized_blur, anomaly_map_topk1_resized_blur, anomaly_map_patchcore_resized_blur, anomaly_map_pe_resized_blur, input_x, gt_np*255, file_name[0], x_type[0])
 
     def test_epoch_end(self, outputs):
         # Total pixel-level auc-roc score
@@ -641,7 +685,7 @@ class AC_Model(pl.LightningModule):
         self.log_dict(values)
         
         f = open(os.path.join(self.args.project_root_path, "score_result.csv"), "a")
-        data = [self.args.category, str(self.args.coreset_sampling_ratio), str(self.args.dist_coreset_size), str(self.args.dist_padding), \
+        data = [self.args.category, str(self.args.subsampling_percentage), str(self.args.dist_coreset_size), str(self.args.dist_padding), \
                 str(self.args.softmax_temperature), str(self.args.prob_gamma), \
                 str(pixel_auc), str(pixel_auc_topk1), str(pixel_auc_patchcore), str(pixel_auc_pe), \
                 str(img_auc), str(img_auc_topk1), str(img_auc_patchcore), str(img_auc_pe)]

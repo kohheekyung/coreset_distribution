@@ -7,40 +7,54 @@ from utils.learning.train_part import Coreset, Distribution, AC_Model
 from pytorch_lightning.loggers import TensorBoardLogger
 
 def get_args():
-    parser = argparse.ArgumentParser(description='ANOMALYDETECTION')
+    parser = argparse.ArgumentParser(description='ANOMALYLOCALIZATION')
     parser.add_argument('--phase', choices=['train','test'], default='train')
     parser.add_argument('--dataset_path', default='../dataset/MVTecAD') # ./MVTec
     parser.add_argument('--category', default='hazelnut')
-    parser.add_argument('--batch_size', type=int, default=128)
-    parser.add_argument('--num_workers', default=4) # 0
-    parser.add_argument('--load_size', default=256) # 256
-    parser.add_argument('--input_size', default=224)
-    parser.add_argument('--coreset_sampling_ratio', type=float, default=0.01) # 0.001
-    parser.add_argument('--project_root_path', default=r'./result') # ./test
-    parser.add_argument('--save_src_code', default=True)
+    parser.add_argument('--project_root_path', default=r'./result')
+    #parser.add_argument('--save_src_code', default=True)
     parser.add_argument('--save_anomaly_map', default=True)
-    parser.add_argument('--n_neighbors', type=int, default=9)
-    parser.add_argument('--feature_model', choices=['WR101', 'WR50', 'R50', 'R34', 'R18', 'R101', 'R152'], default='WR50')
-    parser.add_argument('--block_index', choices=['1+2', '2+3', '3+4', '4', '5'], default='2+3') # '2+3' means using both block 2 and block 3
+    parser.add_argument('--gpu', type=int, default=0)
+    parser.add_argument('--seed', type=int, default=22)
+    parser.add_argument('--num_workers', default=8) # 0
+    
+    # patch_core
+    parser.add_argument('--backbone', '-b', choices=['WR101', 'WR50', 'R50', 'R34', 'R18', 'R101', 'R152'], default='WR50')
+    parser.add_argument('--layer_index', '-le', nargs='+', default=['layer2', 'layer3'])
+    parser.add_argument('--patchcore_batchsize', type=int, default=2)
+    parser.add_argument('--pretrain_embed_dimension', type=int, default=1024) # Dimensionality of features extracted from backbone layers
+    parser.add_argument('--target_embed_dimension', type=int, default=1024) # final aggregated PatchCore Dimensionality
+    parser.add_argument('--anomaly_nn', type=int, default=3) # Num. nearest neighbours to use for anomaly detection
+    parser.add_argument('--patchsize', type=int, default=5) # neighbourhoodsize for local aggregation
+    parser.add_argument('--faiss_on_gpu', default=False, action='store_true', help="Whether to use gpu on faiss")
+    
+    # sampler
+    parser.add_argument('--subsampling_percentage', type=float, default=0.1)
+    
+    # dataset
+    parser.add_argument('--resize', type=int, default=256)
+    parser.add_argument('--imagesize', type=int, default=224)
+    
+    # coreset_distribution
     parser.add_argument('--dist_coreset_size', type=int, default=2048) # 512
-    parser.add_argument('--dist_padding', type=int, default=1)
+    parser.add_argument('--dist_padding', type=int, default=3)
     parser.add_argument('--num_epochs', type=int, default=12)
     parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--step_size', type=int, default=5)
-    parser.add_argument('--dist_batch_size', type=int, default=512)
+    parser.add_argument('--dist_batchsize', type=int, default=512)
     parser.add_argument('--softmax_temperature', type=float, default=1.0)
     parser.add_argument('--prob_gamma', type=float, default=0.99)
+    
+    # ETC
     parser.add_argument('--use_position_encoding', default=False, action='store_true', help="Whether to use position encoding")
-    parser.add_argument('--pe_weight', type=float, default=1)
+    parser.add_argument('--pe_weight', type=float, default=10)
     parser.add_argument('--not_use_coreset_distribution', default=False, action='store_true', help='Whether not to use coreset_distribution')
-    parser.add_argument('--use_reflect_resize', default=False, action='store_true', help='Whether not to use reflect_resize') # Serious anomaly problem in some categories(ex. grid)
     args = parser.parse_args()
     return args
 
 if __name__ == '__main__':
-    pl.seed_everything(1234)
-    
     args = get_args()
+    pl.seed_everything(args.seed)
     default_root_dir = os.path.join(args.project_root_path, args.category) # ./MVTec/hazelnut
 
     train_dataloader = Train_Dataloader(args)
