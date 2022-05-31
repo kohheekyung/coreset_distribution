@@ -339,6 +339,28 @@ class Distribution(pl.LightningModule):
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=self.args.step_size, gamma=0.1)
         return [optimizer], [scheduler]
     
+class Coor_Distribution():
+    def __init__(self, args, coor_dist_input_size, coor_dist_output_size):
+        super(Coor_Distribution, self).__init__()
+        self.args = args
+        self.embedding_dir_path = os.path.join('./', f'embeddings_{"+".join(self.args.layer_index)}', self.args.category)
+        os.makedirs(self.embedding_dir_path, exist_ok=True)
+        
+        self.coor_dist_input_size = coor_dist_input_size
+        self.coor_dist_output_size = coor_dist_output_size
+        self.coor_model = np.zeros(shape = (coor_dist_input_size[0] * coor_dist_input_size[1], coor_dist_output_size), dtype=np.float32)
+        self.coor_model_save_path = os.path.join(self.embedding_dir_path, f'coor_model_{self.args.dist_coreset_size}.npy')
+        
+    def fit(self, train_dataloader) :
+        for iter, batch in enumerate(train_dataloader):
+            coordinate, index = batch
+            coordinate = coordinate.numpy().astype(int)
+            index = index.numpy().astype(int)
+            for i in range(len(index)) :
+                self.coor_model[coordinate[i][0] * self.coor_dist_input_size[1] + coordinate[i][1]][index[i]] += 1.0
+        self.coor_model /= np.sum(self.coor_model, axis = 1).reshape(-1, 1)
+        np.save(self.coor_model_save_path, self.coor_model)        
+    
 class AC_Model(pl.LightningModule):
     def __init__(self, args, dist_input_size, dist_output_size):
         super(AC_Model, self).__init__()
@@ -379,6 +401,8 @@ class AC_Model(pl.LightningModule):
         if not args.not_use_coreset_distribution:
             self.dist_model = Distribution_Model(args, dist_input_size, dist_output_size)        
             self.dist_model.load_state_dict(torch.load(os.path.join(self.embedding_dir_path, f'best_model_{self.args.dist_padding}_{self.args.dist_coreset_size}.pt'))['model'])
+        if args.use_coordinate_distribution :
+            self.coor_dist_model = np.load(os.path.join(self.embedding_dir_path, f'coor_model_{self.args.dist_coreset_size}.npy'))
 
     def init_results_list(self):
         self.gt_list_px_lvl = []
@@ -459,7 +483,7 @@ class AC_Model(pl.LightningModule):
 
         self.init_results_list()
         self.embedding_dir_path, self.sample_path, self.source_code_save_path = prep_dirs(self.logger.log_dir, self.args)
-        self.pe_pad = None
+        # self.pe_pad = None
         self.position_encoding = None
 
     def test_step(self, batch, batch_idx): # Nearest Neighbour Search
@@ -528,16 +552,17 @@ class AC_Model(pl.LightningModule):
                     self.position_encoding[0, i, j, 0] = self.args.pe_weight * i / W
                     self.position_encoding[0, i, j, 1] = self.args.pe_weight * j / H
                     
-        if self.pe_pad is None :
-            pad_width = ((self.args.dist_padding,),(self.args.dist_padding,), (0,))
-            self.pe_pad = np.pad(self.position_encoding.squeeze(0), pad_width, "reflect", reflect_type='odd') # (W+1) x (H+1) x 2
+        # if self.pe_pad is None :
+        #     pad_width = ((self.args.dist_padding,),(self.args.dist_padding,), (0,))
+        #     self.pe_pad = np.pad(self.position_encoding.squeeze(0), pad_width, "reflect", reflect_type='odd') # (W+1) x (H+1) x 2
             
         if not self.args.not_use_coreset_distribution:
             pad_width = ((self.args.dist_padding,),(self.args.dist_padding,), (0,))         
-            embedding_pad = np.pad(embedding_test.reshape(W, H, -1), pad_width, "reflect") # (W+1) x (H+1) x E
-            if self.args.use_position_encoding :
-                embedding_pad = np.concatenate((embedding_pad, self.pe_pad), axis = 2) # (W+1) x (H+1) x (E+2)
-                #embedding_pad = np.concatenate((embedding_pad + self.pe_pad[:1], embedding_pad + self.pe_pad[1:]), axis = 0) # 2E x (W+1) x (H+1)    
+            #embedding_pad = np.pad(embedding_test.reshape(W, H, -1), pad_width, "reflect") # (W+1) x (H+1) x E
+            embedding_pad = np.pad(embedding_test.reshape(W, H, -1), pad_width, "constant") # (W+1) x (H+1) x E
+            # if self.args.use_position_encoding :
+            #    embedding_pad = np.concatenate((embedding_pad, self.pe_pad), axis = 2) # (W+1) x (H+1) x (E+2)
+            #    embedding_pad = np.concatenate((embedding_pad + self.pe_pad[:1], embedding_pad + self.pe_pad[1:]), axis = 0) # 2E x (W+1) x (H+1)    
                                 
             neighbors = np.zeros(shape=(W, H, embedding_pad.shape[2]*(pow(self.args.dist_padding*2+1, 2) - 1))) # W x H x NE
             # construct neighbor features
@@ -594,31 +619,36 @@ class AC_Model(pl.LightningModule):
             neighbors = neighbors.reshape(-1, neighbors.shape[2]).astype(np.float32) # (W x H) x NE
             y_hat = self.dist_model(torch.tensor(neighbors).cuda()).cpu() # (W x H) x self.dist_coreset_index.ntotal
             
+            if self.args.use_coordinate_distribution :
+                softmax_coor = self.coor_dist_model
+            
             anomaly_pxl_likelihood = np.zeros(shape=(neighbors.shape[0])) # (W x H)
-            anomaly_pxl_topk1 = np.ones(shape=(neighbors.shape[0])) * 1e+6 # (W x H)
-            # anomaly_pxl_topk1 = np.zeros(shape=(neighbors.shape[0])) # (W x H)
+            anomaly_pxl_topk1 = np.zeros(shape=(neighbors.shape[0])) # (W x H)
 
-            softmax_temp = F.softmax(y_hat / self.args.softmax_temperature, dim = -1).cpu().numpy() # (W x H) x self.dist_coreset_indesx.ntotal
-            softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > (1.0 / self.dist_coreset_index.ntotal) # threshold of softmax
-            #softmax_thres = F.softmax(y_hat, dim = -1).cpu().numpy() > 0.04 # threshold of softmax
+            softmax_temp = F.softmax(y_hat / self.args.softmax_temperature_alpha, dim = -1).cpu().numpy() # (W x H) x self.dist_coreset_indesx.ntotal
+
+            softmax_thres = softmax_temp * softmax_coor > (1 / 2048.0) * (1 / 2048.0) # threshold of softmax
+            softmax_coor_thres = softmax_coor > 1 / 2048 # threshold of softmax
             
-            distances, indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
-            distances = np.sqrt(distances)
-            prob_embedding = calc_prob_embedding(distances, gamma=self.args.prob_gamma)
+            dist_distances, dist_indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
+            dist_distances = np.sqrt(dist_distances)
+            prob_embedding = calc_prob_embedding(dist_distances, gamma=self.args.prob_gamma)
             
-            softmax_temp_inverse = np.zeros_like(softmax_temp)
+            #softmax_temp_inverse = np.zeros_like(softmax_temp)
             softmax_thres_inverse = np.zeros_like(softmax_thres)
+            softmax_coor_thres_inverse = np.zeros_like(softmax_coor_thres)
             for i in range(neighbors.shape[0]) :
                 for k in range(self.dist_coreset_index.ntotal) :
-                    softmax_temp_inverse[i, k] = softmax_temp[i, indices[i, k]]
-                    softmax_thres_inverse[i, k] = softmax_thres[i, indices[i, k]]
+                    #softmax_temp_inverse[i, k] = softmax_temp[i, dist_indices[i, k]]
+                    softmax_thres_inverse[i, k] = softmax_thres[i, dist_indices[i, k]]
+                    softmax_coor_thres_inverse[i, k] = softmax_coor_thres[i, dist_indices[i, k]]
                     
-            anomaly_pxl_likelihood = np.sum(distances * softmax_temp_inverse, axis = 1)
-            anomaly_pxl_topk1 = np.apply_along_axis(lambda a : np.min(a[a!=0]), 1, distances * softmax_thres_inverse)
+            #anomaly_pxl_likelihood = np.sum(dist_distances * softmax_temp_inverse, axis = 1)
+            anomaly_pxl_likelihood = np.apply_along_axis(lambda a : np.min(a[a!=0]), 1, dist_distances * softmax_thres_inverse)
+            anomaly_pxl_topk1 = np.apply_along_axis(lambda a : np.min(a[a!=0]), 1, dist_distances * softmax_coor_thres_inverse)
 
             # anomaly_pxl_score = -np.log(anomaly_pxl_likelihood).reshape(ref_num_patches)
             anomaly_pxl_score = anomaly_pxl_likelihood.reshape(ref_num_patches)
-            # anomaly_pxl_score = distances[:, 0].reshape(ref_num_patches)
             anomaly_img_score_nb = np.max(anomaly_pxl_score)
             anomaly_map_nb = anomaly_pxl_score
 
@@ -626,7 +656,6 @@ class AC_Model(pl.LightningModule):
             # anomaly_map_topk1 = anomaly_map_nb
             # anomaly_pxl_topk1 = prob_embedding[:, 0]
             # anomaly_map_topk1 = -np.log(anomaly_pxl_topk1).reshape(ref_num_patches)
-            # anomaly_map_topk1 = distances[:, 0].reshape(ref_num_patches)
             anomaly_map_topk1 = anomaly_pxl_topk1.reshape(ref_num_patches)
             anomaly_img_score_topk1 = np.max(anomaly_map_topk1)
                 
@@ -686,7 +715,7 @@ class AC_Model(pl.LightningModule):
         
         f = open(os.path.join(self.args.project_root_path, "score_result.csv"), "a")
         data = [self.args.category, str(self.args.subsampling_percentage), str(self.args.dist_coreset_size), str(self.args.dist_padding), \
-                str(self.args.softmax_temperature), str(self.args.prob_gamma), \
+                str(self.args.softmax_temperature_alpha), str(self.args.prob_gamma), \
                 str(f'{pixel_auc : .3f}'), str(f'{pixel_auc_topk1 : .3f}'), str(f'{pixel_auc_patchcore : .3f}'), str(f'{pixel_auc_pe : .3f}'), \
                 str(f'{img_auc : .3f}'), str(f'{img_auc_topk1 : .3f}'), str(f'{img_auc_patchcore : .3f}'), str(f'{img_auc_pe : .3f}')]
         data = ','.join(data) + '\n'
