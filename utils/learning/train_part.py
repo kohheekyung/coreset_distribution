@@ -350,6 +350,7 @@ class Coor_Distribution():
         self.coor_dist_output_size = coor_dist_output_size
         self.coor_model = np.zeros(shape = (coor_dist_input_size[0] * coor_dist_input_size[1], coor_dist_output_size), dtype=np.float32)
         self.coor_model_save_path = os.path.join(self.embedding_dir_path, f'coor_model_{self.args.dist_coreset_size}.npy')
+        self.dist_padding = args.dist_padding
         
     def fit(self, train_dataloader) :
         for iter, batch in enumerate(train_dataloader):
@@ -357,7 +358,15 @@ class Coor_Distribution():
             coordinate = coordinate.numpy().astype(int)
             index = index.numpy().astype(int)
             for i in range(len(index)) :
-                self.coor_model[coordinate[i][0] * self.coor_dist_input_size[1] + coordinate[i][1]][index[i]] += 1.0
+                for dx in range(-self.dist_padding, self.dist_padding+1) :
+                    coor_x = coordinate[i][0] + dx
+                    if coor_x not in range(0, self.coor_dist_input_size[0]) :
+                        continue
+                    for dy in range(-self.dist_padding, self.dist_padding+1) :                        
+                        coor_y = coordinate[i][1] + dy
+                        if coor_y not in range(0, self.coor_dist_input_size[1]) :
+                            continue                
+                        self.coor_model[coor_x * self.coor_dist_input_size[1] + coor_y][index[i]] += 1.0
         self.coor_model /= np.sum(self.coor_model, axis = 1).reshape(-1, 1)
         np.save(self.coor_model_save_path, self.coor_model)        
     
@@ -627,7 +636,8 @@ class AC_Model(pl.LightningModule):
 
             softmax_temp = F.softmax(y_hat / self.args.softmax_temperature_alpha, dim = -1).cpu().numpy() # (W x H) x self.dist_coreset_indesx.ntotal
 
-            softmax_thres = softmax_temp * softmax_coor > (1 / 2048.0) * (1 / 2048.0) # threshold of softmax
+            #softmax_thres = softmax_temp * softmax_coor > (1 / 2048.0) * (1 / 2048.0) # threshold of softmax
+            softmax_thres = softmax_temp  > 0.5 / 2048
             softmax_coor_thres = softmax_coor > 1 / 2048 # threshold of softmax
             
             dist_distances, dist_indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal

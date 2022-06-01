@@ -77,7 +77,8 @@ if __name__ == '__main__':
         distribution_trainer.fit(distribution_model, train_dataloaders=distribution_train_dataloader, val_dataloaders=distribution_val_dataloader)
     
     # train coordinate distribution
-    if args.phase == 'train' and args.use_coordinate_distribution:        
+    #if args.phase == 'train' and args.use_coordinate_distribution:
+    if args.use_coordinate_distribution:   
         coor_distribution_train_dataloader, coor_dist_input_size, coor_dist_output_size = Coor_Distribution_Train_Dataloader(args, train_dataloader)
         coor_distribution_trainer = Coor_Distribution(args, coor_dist_input_size, coor_dist_output_size)
         coor_distribution_trainer.fit(coor_distribution_train_dataloader)
