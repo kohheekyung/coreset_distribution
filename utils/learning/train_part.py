@@ -653,6 +653,10 @@ class AC_Model(pl.LightningModule):
                     softmax_thres_inverse[i, k] = softmax_thres[i, dist_indices[i, k]]
                     softmax_coor_thres_inverse[i, k] = softmax_coor_thres[i, dist_indices[i, k]]
                     
+            for i in range(neighbors.shape[0]) :
+                softmax_thres_inverse[i, -1] = True
+                softmax_coor_thres_inverse[i, -1] = True
+                    
             #anomaly_pxl_likelihood = np.sum(dist_distances * softmax_temp_inverse, axis = 1)
             anomaly_pxl_likelihood = np.apply_along_axis(lambda a : np.min(a[a!=0]), 1, dist_distances * softmax_thres_inverse)
             anomaly_pxl_topk1 = np.apply_along_axis(lambda a : np.min(a[a!=0]), 1, dist_distances * softmax_coor_thres_inverse)
