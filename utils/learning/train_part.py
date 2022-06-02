@@ -637,8 +637,9 @@ class AC_Model(pl.LightningModule):
             softmax_temp = F.softmax(y_hat / self.args.softmax_temperature_alpha, dim = -1).cpu().numpy() # (W x H) x self.dist_coreset_indesx.ntotal
 
             #softmax_thres = softmax_temp * softmax_coor > (1 / 2048.0) * (1 / 2048.0) # threshold of softmax
-            softmax_thres = (softmax_temp  > self.args.softmax_gamma / 2048) * (softmax_coor > 1 / 2048)
-            softmax_coor_thres = softmax_coor > 10 / 2048 # threshold of softmax
+            #softmax_thres = (softmax_temp  > self.args.softmax_gamma / 2048) * (softmax_coor > 1 / 2048)
+            softmax_thres = 1 - (softmax_temp  <= self.args.softmax_gamma / 2048) * (softmax_coor <= 1 / 2048)
+            softmax_coor_thres = softmax_coor > 2 / 2048 # threshold of softmax
             
             dist_distances, dist_indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
             dist_distances = np.sqrt(dist_distances)
