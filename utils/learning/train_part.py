@@ -639,18 +639,18 @@ class AC_Model(pl.LightningModule):
             #softmax_thres = softmax_temp * softmax_coor > (1 / 2048.0) * (1 / 2048.0) # threshold of softmax
             #softmax_thres = (softmax_temp  > self.args.softmax_gamma / 2048) * (softmax_coor > 1 / 2048)
             softmax_thres = 1 - (softmax_temp  <= self.args.softmax_gamma / 2048) * (softmax_coor <= 1 / 2048)
-            softmax_coor_thres = softmax_coor > 2 / 2048 # threshold of softmax
+            softmax_coor_thres = softmax_coor > 5 / 2048 # threshold of softmax
             
             dist_distances, dist_indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
             dist_distances = np.sqrt(dist_distances)
             prob_embedding = calc_prob_embedding(dist_distances, gamma=self.args.prob_gamma)
             
-            #softmax_temp_inverse = np.zeros_like(softmax_temp)
+            softmax_temp_inverse = np.zeros_like(softmax_temp)
             softmax_thres_inverse = np.zeros_like(softmax_thres)
             softmax_coor_thres_inverse = np.zeros_like(softmax_coor_thres)
             for i in range(neighbors.shape[0]) :
                 for k in range(self.dist_coreset_index.ntotal) :
-                    #softmax_temp_inverse[i, k] = softmax_temp[i, dist_indices[i, k]]
+                    softmax_temp_inverse[i, k] = softmax_temp[i, dist_indices[i, k]]
                     softmax_thres_inverse[i, k] = softmax_thres[i, dist_indices[i, k]]
                     softmax_coor_thres_inverse[i, k] = softmax_coor_thres[i, dist_indices[i, k]]
                     
@@ -658,8 +658,8 @@ class AC_Model(pl.LightningModule):
                 softmax_thres_inverse[i, -1] = True
                 softmax_coor_thres_inverse[i, -1] = True
                     
-            #anomaly_pxl_likelihood = np.sum(dist_distances * softmax_temp_inverse, axis = 1)
-            anomaly_pxl_likelihood = np.apply_along_axis(lambda a : np.min(a[a!=0]), 1, dist_distances * softmax_thres_inverse)
+            anomaly_pxl_likelihood = np.sum(dist_distances * softmax_temp_inverse, axis = 1)
+            #anomaly_pxl_likelihood = np.apply_along_axis(lambda a : np.min(a[a!=0]), 1, dist_distances * softmax_thres_inverse)
             anomaly_pxl_topk1 = np.apply_along_axis(lambda a : np.min(a[a!=0]), 1, dist_distances * softmax_coor_thres_inverse)
 
             # anomaly_pxl_score = -np.log(anomaly_pxl_likelihood).reshape(ref_num_patches)
