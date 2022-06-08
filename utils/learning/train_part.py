@@ -16,7 +16,7 @@ from sklearn.metrics import confusion_matrix
 
 from utils.common.visualize import visualize_TSNE
 from utils.data.transforms import INV_Normalize
-from utils.common.embedding import embedding_concat, reshape_embedding
+from utils.common.embedding import generate_embedding, embedding_concat, reshape_embedding
 from utils.learning.model import Distribution_Model
 from utils.common.image_processing import PatchMaker, ForwardHook, LastLayerToExtractReachedException
 from utils.common.backbones import Backbone
@@ -142,55 +142,18 @@ class Coreset(pl.LightningModule):
         
         batchsize = x.shape[0]
            
-        features = self(x)            
-        features = [features[layer] for layer in self.args.layer_index]        
-        features = [
-            self.patch_maker.patchify(x, return_spatial_info=True) for x in features
-        ]
+        features = self(x)
         
-        patch_shapes = [x[1] for x in features]
-        features = [x[0] for x in features]
-        ref_num_patches = patch_shapes[0]
+        features, ref_num_patches = generate_embedding(self.args, features, self.patch_maker)
+        if self.args.cut_edge_embedding :
+            features_cut = features.reshape(batchsize, ref_num_patches[0], ref_num_patches[1], -1) # N x W x H x E
+            patch_padding = (self.args.patchsize - 1) // 2
+            features_cut = features_cut[:, patch_padding:-patch_padding, patch_padding:-patch_padding, :] # N x (W - p) x (H - p) x E
+            features_cut = features_cut.reshape(-1, features_cut.shape[-1])
+            self.embedding_list.extend([x.detach().cpu().numpy() for x in features_cut])
+        else :
+            self.embedding_list.extend([x.detach().cpu().numpy() for x in features])
         
-        for i in range(1, len(features)):
-            _features = features[i]
-            patch_dims = patch_shapes[i]
-
-            _features = _features.reshape(
-                _features.shape[0], patch_dims[0], patch_dims[1], *_features.shape[2:]
-            )
-            _features = _features.permute(0, -3, -2, -1, 1, 2)
-            perm_base_shape = _features.shape
-            _features = _features.reshape(-1, *_features.shape[-2:])
-            _features = F.interpolate(
-                _features.unsqueeze(1),
-                size=(ref_num_patches[0], ref_num_patches[1]),
-                mode="bilinear",
-                align_corners=False,
-            )
-            _features = _features.squeeze(1)
-            _features = _features.reshape(
-                *perm_base_shape[:-2], ref_num_patches[0], ref_num_patches[1]
-            )
-            _features = _features.permute(0, -2, -1, 1, 2, 3)
-            _features = _features.reshape(len(_features), -1, *_features.shape[-3:])
-            features[i] = _features
-        features = [x.reshape(-1, *x.shape[-3:]) for x in features]
-        
-        # preprocessing
-        _features = []
-        for feature in features : 
-            feature = feature.reshape(len(feature), 1, -1)
-            _features.append(F.adaptive_avg_pool1d(feature, self.args.pretrain_embed_dimension).squeeze(1))
-            
-        features = torch.stack(_features, dim=1)
-        
-        # preadapt aggregator
-        _features = features.reshape(len(features), 1, -1)
-        _features = F.adaptive_avg_pool1d(_features, self.args.target_embed_dimension)
-        features = _features.reshape(len(features), -1)
-        
-        self.embedding_list.extend([x.detach().cpu().numpy() for x in features])
 
         if self.args.use_position_encoding :
             W, H = ref_num_patches
@@ -205,7 +168,14 @@ class Coreset(pl.LightningModule):
 
             features_pe = np.concatenate((features.detach().cpu().numpy(), position_encoding), axis = 1)
             
-            self.embedding_pe_list.extend([x for x in features_pe])
+            if self.args.cut_edge_embedding :
+                features_pe_cut = features_pe.reshape(batchsize, ref_num_patches[0], ref_num_patches[1], -1) # N x W x H x E
+                patch_padding = (self.args.patchsize - 1) // 2
+                features_pe_cut = features_pe_cut[:, patch_padding:-patch_padding, patch_padding:-patch_padding, :] # N x (W - p) x (H - p) x E
+                features_pe_cut = features_pe_cut.reshape(-1, features_pe_cut.shape[-1])
+                self.embedding_pe_list.extend([x for x in features_pe_cut])
+            else :
+                self.embedding_pe_list.extend([x for x in features_pe])
 
     def training_epoch_end(self, outputs):
         total_embeddings = np.array(self.embedding_list)
@@ -501,54 +471,8 @@ class AC_Model(pl.LightningModule):
         batchsize = x.shape[0]
         
         features = self(x)
-            
-        features = [features[layer] for layer in self.args.layer_index]
         
-        features = [
-            self.patch_maker.patchify(x, return_spatial_info=True) for x in features
-        ]
-        
-        patch_shapes = [x[1] for x in features]
-        features = [x[0] for x in features]
-        ref_num_patches = patch_shapes[0]
-        
-        for i in range(1, len(features)):
-            _features = features[i]
-            patch_dims = patch_shapes[i]
-
-            _features = _features.reshape(
-                _features.shape[0], patch_dims[0], patch_dims[1], *_features.shape[2:]
-            )
-            _features = _features.permute(0, -3, -2, -1, 1, 2)
-            perm_base_shape = _features.shape
-            _features = _features.reshape(-1, *_features.shape[-2:])
-            _features = F.interpolate(
-                _features.unsqueeze(1),
-                size=(ref_num_patches[0], ref_num_patches[1]),
-                mode="bilinear",
-                align_corners=False,
-            )
-            _features = _features.squeeze(1)
-            _features = _features.reshape(
-                *perm_base_shape[:-2], ref_num_patches[0], ref_num_patches[1]
-            )
-            _features = _features.permute(0, -2, -1, 1, 2, 3)
-            _features = _features.reshape(len(_features), -1, *_features.shape[-3:])
-            features[i] = _features
-        features = [x.reshape(-1, *x.shape[-3:]) for x in features]
-        
-        # preprocessing
-        _features = []
-        for feature in features : 
-            feature = feature.reshape(len(feature), 1, -1)
-            _features.append(F.adaptive_avg_pool1d(feature, self.args.pretrain_embed_dimension).squeeze(1))
-            
-        features = torch.stack(_features, dim=1)
-        
-        # preadapt aggregator
-        features = features.reshape(len(features), 1, -1)
-        features = F.adaptive_avg_pool1d(features, self.args.target_embed_dimension)
-        features = features.reshape(len(features), -1)
+        features, ref_num_patches = generate_embedding(self.args, features, self.patch_maker)
             
         embedding_test = features.detach().cpu().numpy() # (W x H) x E
 
@@ -587,7 +511,12 @@ class AC_Model(pl.LightningModule):
 
         ## patchcore        
         embedding_score, embedding_indices = self.embedding_coreset_index.search(embedding_test, k=self.args.anomaly_nn) # (W x H) x self.args.n_neighbors
-        embedding_score = np.sqrt(embedding_score)
+        embedding_score = np.sqrt(embedding_score)        
+        if self.args.cut_edge_embedding :
+            embedding_score = embedding_score.reshape((ref_num_patches[0], ref_num_patches[1], -1))
+            patch_padding = (self.args.patchsize - 1) // 2
+            embedding_score = embedding_score[patch_padding:-patch_padding, patch_padding:-patch_padding, :]
+            embedding_score = embedding_score.reshape(-1, embedding_score.shape[-1])
         
         max_anomaly_idx = np.argmax(embedding_score[:, 0])
         max_embedding_score = embedding_score[max_anomaly_idx, 0] # maximum embedding score
@@ -598,7 +527,13 @@ class AC_Model(pl.LightningModule):
 
         anomaly_img_score_patchcore = weights_from_code * max_embedding_score # Image-level score
         #anomaly_img_score_patchcore = max_embedding_score # Image-level score
-        anomaly_map_patchcore = embedding_score[:, 0].reshape(ref_num_patches)
+        
+        if self.args.cut_edge_embedding :
+            anomaly_map_patchcore = embedding_score[:, 0].reshape((ref_num_patches[0] - 2 * patch_padding, ref_num_patches[1] - 2 * patch_padding))
+            pad_width = ((patch_padding,),(patch_padding,))
+            anomaly_map_patchcore = np.pad(anomaly_map_patchcore, pad_width, 'edge')
+        else : 
+            anomaly_map_patchcore = embedding_score[:, 0].reshape(ref_num_patches)
         
         ## patchcore using position encoding
         anomaly_img_score_pe = anomaly_img_score_patchcore
@@ -610,6 +545,12 @@ class AC_Model(pl.LightningModule):
             embedding_pe_score, embedding_pe_indices = self.embedding_coreset_pe_index.search(embedding_pe_test, k=self.args.anomaly_nn) # (W x H) x self.args.n_neighbors
             embedding_pe_score = np.sqrt(embedding_pe_score)
             
+            if self.args.cut_edge_embedding :
+                embedding_pe_score = embedding_pe_score.reshape((ref_num_patches[0], ref_num_patches[1], -1))
+                patch_padding = (self.args.patchsize - 1) // 2
+                embedding_pe_score = embedding_pe_score[patch_padding:-patch_padding, patch_padding:-patch_padding, :]
+                embedding_pe_score = embedding_pe_score.reshape(-1, embedding_pe_score.shape[-1])
+            
             max_anomaly_idx = np.argmax(embedding_pe_score[:, 0])
             max_embedding_score = embedding_pe_score[max_anomaly_idx, 0] # maximum embedding score
             if self.args.anomaly_nn == 1 :
@@ -619,7 +560,12 @@ class AC_Model(pl.LightningModule):
 
             anomaly_img_score_pe= weights_from_code * max_embedding_score # Image-level score
             #anomaly_img_score_pe= max_embedding_score # Image-level score
-            anomaly_map_pe = embedding_pe_score[:, 0].reshape(ref_num_patches)
+            if self.args.cut_edge_embedding :
+                anomaly_map_pe = embedding_pe_score[:, 0].reshape((ref_num_patches[0] - 2 * patch_padding, ref_num_patches[1] - 2 * patch_padding))
+                pad_width = ((patch_padding,),(patch_padding,))
+                anomaly_map_pe = np.pad(anomaly_map_pe, pad_width, 'edge')
+            else : 
+                anomaly_map_pe = embedding_pe_score[:, 0].reshape(ref_num_patches)
 
         ## using neighbor distribution
         anomaly_img_score_nb = anomaly_img_score_topk1 = anomaly_img_score_patchcore
@@ -637,9 +583,9 @@ class AC_Model(pl.LightningModule):
             softmax_temp = F.softmax(y_hat / self.args.softmax_temperature_alpha, dim = -1).cpu().numpy() # (W x H) x self.dist_coreset_indesx.ntotal
 
             #softmax_thres = softmax_temp * softmax_coor > (1 / 2048.0) * (1 / 2048.0) # threshold of softmax
-            #softmax_thres = (softmax_temp  > self.args.softmax_gamma / 2048) * (softmax_coor > 1 / 2048)
-            softmax_thres = 1 - (softmax_temp  <= self.args.softmax_gamma / 2048) * (softmax_coor <= 1 / 2048)
-            softmax_coor_thres = softmax_coor > 5 / 2048 # threshold of softmax
+            softmax_thres = (softmax_temp  > self.args.softmax_gamma / 2048) * (softmax_coor > 1 / 2048)
+            #softmax_thres = 1 - (softmax_temp  <= self.args.softmax_gamma / 2048) * (softmax_coor <= 1 / 2048)
+            softmax_coor_thres = softmax_coor > 1 / 2048 # threshold of softmax
             
             dist_distances, dist_indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
             dist_distances = np.sqrt(dist_distances)

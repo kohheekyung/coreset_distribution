@@ -9,7 +9,7 @@ from torch.nn import functional as F
 from utils.data.transforms import Transform, GT_Transform
 import faiss
 import numpy as np
-from utils.common.embedding import embedding_concat
+from utils.common.embedding import embedding_concat, generate_embedding
 from utils.common.image_processing import PatchMaker, ForwardHook, LastLayerToExtractReachedException
 from utils.common.backbones import Backbone
 
@@ -154,53 +154,7 @@ class Distribution_Dataset_Generator():
 
             features = self.forward(x)
             
-            features = [features[layer] for layer in self.args.layer_index]
-            
-            features = [
-                self.patch_maker.patchify(x, return_spatial_info=True) for x in features
-            ]
-            
-            patch_shapes = [x[1] for x in features]
-            features = [x[0] for x in features]
-            ref_num_patches = patch_shapes[0]
-            
-            for i in range(1, len(features)):
-                _features = features[i]
-                patch_dims = patch_shapes[i]
-
-                _features = _features.reshape(
-                    _features.shape[0], patch_dims[0], patch_dims[1], *_features.shape[2:]
-                )
-                _features = _features.permute(0, -3, -2, -1, 1, 2)
-                perm_base_shape = _features.shape
-                _features = _features.reshape(-1, *_features.shape[-2:])
-                _features = F.interpolate(
-                    _features.unsqueeze(1),
-                    size=(ref_num_patches[0], ref_num_patches[1]),
-                    mode="bilinear",
-                    align_corners=False,
-                )
-                _features = _features.squeeze(1)
-                _features = _features.reshape(
-                    *perm_base_shape[:-2], ref_num_patches[0], ref_num_patches[1]
-                )
-                _features = _features.permute(0, -2, -1, 1, 2, 3)
-                _features = _features.reshape(len(_features), -1, *_features.shape[-3:])
-                features[i] = _features
-            features = [x.reshape(-1, *x.shape[-3:]) for x in features]
-            
-            # preprocessing
-            _features = []
-            for feature in features : 
-                feature = feature.reshape(len(feature), 1, -1)
-                _features.append(F.adaptive_avg_pool1d(feature, self.args.pretrain_embed_dimension).squeeze(1))
-                
-            features = torch.stack(_features, dim=1)
-            
-            # preadapt aggregator
-            features = features.reshape(len(features), 1, -1)
-            features = F.adaptive_avg_pool1d(features, self.args.target_embed_dimension)
-            features = features.reshape(len(features), -1)
+            features, ref_num_patches = generate_embedding(self.args, features, self.patch_maker)
             
             _, embedding_indices = self.dist_coreset_index.search(features.detach().cpu().numpy(), k=1)
             
@@ -210,17 +164,6 @@ class Distribution_Dataset_Generator():
             pad_width = ((0,),(self.dist_padding,),(self.dist_padding,), (0,))
             #embedding_pad = np.pad(features.detach().cpu().numpy(), pad_width, "reflect")
             embedding_pad = np.pad(features.detach().cpu().numpy(), pad_width, "constant")
-            # if self.args.use_position_encoding :
-            #     W, H = ref_num_patches
-            #     position_encoding = np.zeros(shape=(1, W, H, 2))
-            #     for i in range(W) :
-            #         for j in range(H) : 
-            #             position_encoding[0, i, j, 0] = self.args.pe_weight * i / W
-            #             position_encoding[0, i, j, 1] = self.args.pe_weight * j / H
-                
-            #     pe_pad = np.pad(position_encoding, pad_width, "reflect", reflect_type='odd')
-            #     pe_pad = np.tile(pe_pad, (batchsize, 1, 1, 1)).astype(np.float32)
-            #     embedding_pad = np.concatenate((embedding_pad, pe_pad), axis = 3) # N x (W+1) x (H+1) x 2E
             
             self.embedding_pad_list.extend([x for x in embedding_pad])
             self.embedding_indices_list.extend([x for x in embedding_indices])
@@ -328,53 +271,7 @@ class Coor_Distribution_Dataset_Generator():
 
             features = self.forward(x)
             
-            features = [features[layer] for layer in self.args.layer_index]
-            
-            features = [
-                self.patch_maker.patchify(x, return_spatial_info=True) for x in features
-            ]
-            
-            patch_shapes = [x[1] for x in features]
-            features = [x[0] for x in features]
-            ref_num_patches = patch_shapes[0]
-            
-            for i in range(1, len(features)):
-                _features = features[i]
-                patch_dims = patch_shapes[i]
-
-                _features = _features.reshape(
-                    _features.shape[0], patch_dims[0], patch_dims[1], *_features.shape[2:]
-                )
-                _features = _features.permute(0, -3, -2, -1, 1, 2)
-                perm_base_shape = _features.shape
-                _features = _features.reshape(-1, *_features.shape[-2:])
-                _features = F.interpolate(
-                    _features.unsqueeze(1),
-                    size=(ref_num_patches[0], ref_num_patches[1]),
-                    mode="bilinear",
-                    align_corners=False,
-                )
-                _features = _features.squeeze(1)
-                _features = _features.reshape(
-                    *perm_base_shape[:-2], ref_num_patches[0], ref_num_patches[1]
-                )
-                _features = _features.permute(0, -2, -1, 1, 2, 3)
-                _features = _features.reshape(len(_features), -1, *_features.shape[-3:])
-                features[i] = _features
-            features = [x.reshape(-1, *x.shape[-3:]) for x in features]
-            
-            # preprocessing
-            _features = []
-            for feature in features : 
-                feature = feature.reshape(len(feature), 1, -1)
-                _features.append(F.adaptive_avg_pool1d(feature, self.args.pretrain_embed_dimension).squeeze(1))
-                
-            features = torch.stack(_features, dim=1)
-            
-            # preadapt aggregator
-            features = features.reshape(len(features), 1, -1)
-            features = F.adaptive_avg_pool1d(features, self.args.target_embed_dimension)
-            features = features.reshape(len(features), -1)
+            features, ref_num_patches = generate_embedding(self.args, features, self.patch_maker)
             
             _, embedding_indices = self.dist_coreset_index.search(features.detach().cpu().numpy(), k=1)
             

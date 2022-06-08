@@ -52,6 +52,7 @@ def get_args():
     parser.add_argument('--not_use_coreset_distribution', default=False, action='store_true', help='Whether not to use coreset_distribution')
     parser.add_argument('--use_coordinate_distribution', default=False, action='store_true', help='Whether to use coordinate_distribution')
     parser.add_argument('--softmax_temperature_beta', type=float, default=1.0)
+    parser.add_argument('--cut_edge_embedding', default=False, action='store_true', help="Whether to cut edge embedding")
     args = parser.parse_args()
     return args
 
