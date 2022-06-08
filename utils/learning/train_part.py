@@ -591,12 +591,12 @@ class AC_Model(pl.LightningModule):
             dist_distances = np.sqrt(dist_distances)
             prob_embedding = calc_prob_embedding(dist_distances, gamma=self.args.prob_gamma)
             
-            softmax_temp_inverse = np.zeros_like(softmax_temp)
+            #softmax_temp_inverse = np.zeros_like(softmax_temp)
             softmax_thres_inverse = np.zeros_like(softmax_thres)
             softmax_coor_thres_inverse = np.zeros_like(softmax_coor_thres)
             for i in range(neighbors.shape[0]) :
                 for k in range(self.dist_coreset_index.ntotal) :
-                    softmax_temp_inverse[i, k] = softmax_temp[i, dist_indices[i, k]]
+                    #softmax_temp_inverse[i, k] = softmax_temp[i, dist_indices[i, k]]
                     softmax_thres_inverse[i, k] = softmax_thres[i, dist_indices[i, k]]
                     softmax_coor_thres_inverse[i, k] = softmax_coor_thres[i, dist_indices[i, k]]
                     
@@ -604,21 +604,31 @@ class AC_Model(pl.LightningModule):
                 softmax_thres_inverse[i, -1] = True
                 softmax_coor_thres_inverse[i, -1] = True
                     
-            anomaly_pxl_likelihood = np.sum(dist_distances * softmax_temp_inverse, axis = 1)
-            #anomaly_pxl_likelihood = np.apply_along_axis(lambda a : np.min(a[a!=0]), 1, dist_distances * softmax_thres_inverse)
+            #anomaly_pxl_likelihood = np.sum(dist_distances * softmax_temp_inverse, axis = 1)
+            anomaly_pxl_likelihood = np.apply_along_axis(lambda a : np.min(a[a!=0]), 1, dist_distances * softmax_thres_inverse)
             anomaly_pxl_topk1 = np.apply_along_axis(lambda a : np.min(a[a!=0]), 1, dist_distances * softmax_coor_thres_inverse)
 
-            # anomaly_pxl_score = -np.log(anomaly_pxl_likelihood).reshape(ref_num_patches)
-            anomaly_pxl_score = anomaly_pxl_likelihood.reshape(ref_num_patches)
-            anomaly_img_score_nb = np.max(anomaly_pxl_score)
-            anomaly_map_nb = anomaly_pxl_score
+            anomaly_map_nb = anomaly_pxl_likelihood.reshape(ref_num_patches)
+            if self.args.cut_edge_embedding :
+                patch_padding = (self.args.patchsize - 1) // 2
+                pad_width = ((patch_padding,),(patch_padding,))
+                
+                anomaly_map_nb = anomaly_map_nb[patch_padding:-patch_padding, patch_padding:-patch_padding]
+                anomaly_img_score_nb = np.max(anomaly_map_nb)
+                anomaly_map_nb = np.pad(anomaly_map_nb, pad_width, 'edge')
+            else : 
+                anomaly_img_score_nb = np.max(anomaly_map_nb)            
 
-            # anomaly_img_score_topk1 = anomaly_img_score_nb
-            # anomaly_map_topk1 = anomaly_map_nb
-            # anomaly_pxl_topk1 = prob_embedding[:, 0]
-            # anomaly_map_topk1 = -np.log(anomaly_pxl_topk1).reshape(ref_num_patches)
             anomaly_map_topk1 = anomaly_pxl_topk1.reshape(ref_num_patches)
-            anomaly_img_score_topk1 = np.max(anomaly_map_topk1)
+            if self.args.cut_edge_embedding :
+                patch_padding = (self.args.patchsize - 1) // 2
+                pad_width = ((patch_padding,),(patch_padding,))
+                
+                anomaly_map_topk1 = anomaly_map_topk1[patch_padding:-patch_padding, patch_padding:-patch_padding]
+                anomaly_img_score_topk1 = np.max(anomaly_map_topk1)
+                anomaly_map_topk1 = np.pad(anomaly_map_topk1, pad_width, 'edge')
+            else : 
+                anomaly_img_score_topk1 = np.max(anomaly_map_topk1)
                 
         anomaly_map_resized = cv2.resize(anomaly_map_nb, (self.args.imagesize, self.args.imagesize))
         anomaly_map_resized_blur = gaussian_filter(anomaly_map_resized, sigma=4)

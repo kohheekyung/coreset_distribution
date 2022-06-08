@@ -8,7 +8,7 @@ class Distribution_Model(nn.Module):
     Default LinearNet which has 3 fc layers
     """
     def __init__(self, args, input_size, output_size):
-        # input_size : ~1536 * 24, output_size : ~2048
+        # input_size : ~1024 * 24, output_size : ~2048
         super().__init__()
         self.fcs = nn.Sequential(
             nn.Linear(input_size, 2048),

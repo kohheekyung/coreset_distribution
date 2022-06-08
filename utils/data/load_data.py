@@ -174,13 +174,26 @@ class Distribution_Dataset_Generator():
         return input_size, output_size
 
     def __len__(self):
-        return len(self.embedding_indices_list) * np.prod(self.embedding_indices_list[0].shape[:2])
+        len_i, len_j = self.embedding_indices_list[0].shape[:2]
+        if self.args.cut_edge_embedding : 
+            len_i = len_i - self.args.patchsize + 1
+            len_j = len_j - self.args.patchsize + 1
+        
+        return len(self.embedding_indices_list) * len_i * len_j
 
     def __getitem__(self, idx):
         len_list, len_i, len_j = len(self.embedding_indices_list), self.embedding_indices_list[0].shape[0], self.embedding_indices_list[0].shape[1]
 
+        if self.args.cut_edge_embedding : 
+            len_i = len_i - self.args.patchsize + 1
+            len_j = len_j - self.args.patchsize + 1
+
         idx, j_idx = idx // len_j, idx % len_j
         list_idx, i_idx = idx // len_i, idx % len_i
+        
+        if self.args.cut_edge_embedding : 
+            i_idx = i_idx + (self.args.patchsize - 1) // 2
+            j_idx = j_idx + (self.args.patchsize - 1) // 2
 
         embedding_pad = self.embedding_pad_list[list_idx] # (W+1) x (H+1) x E
         embedding_indices = self.embedding_indices_list[list_idx] # W x H
@@ -285,13 +298,26 @@ class Coor_Distribution_Dataset_Generator():
         return input_size, output_size
 
     def __len__(self):
-        return len(self.embedding_indices_list) * np.prod(self.embedding_indices_list[0].shape[:2])
+        len_i, len_j = self.embedding_indices_list[0].shape[:2]
+        if self.args.cut_edge_embedding : 
+            len_i = len_i - self.args.patchsize + 1
+            len_j = len_j - self.args.patchsize + 1
+        
+        return len(self.embedding_indices_list) * len_i * len_j
 
     def __getitem__(self, idx):
         len_list, len_i, len_j = len(self.embedding_indices_list), self.embedding_indices_list[0].shape[0], self.embedding_indices_list[0].shape[1]
+        
+        if self.args.cut_edge_embedding : 
+            len_i = len_i - self.args.patchsize + 1
+            len_j = len_j - self.args.patchsize + 1
 
         idx, j_idx = idx // len_j, idx % len_j
         list_idx, i_idx = idx // len_i, idx % len_i
+        
+        if self.args.cut_edge_embedding : 
+            i_idx = i_idx + (self.args.patchsize - 1) // 2
+            j_idx = j_idx + (self.args.patchsize - 1) // 2
 
         embedding_indices = self.embedding_indices_list[list_idx] # W x H
         
