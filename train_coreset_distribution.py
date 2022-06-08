@@ -44,7 +44,8 @@ def get_args():
     parser.add_argument('--dist_batchsize', type=int, default=1024)
     parser.add_argument('--softmax_temperature_alpha', type=float, default=1.0)
     parser.add_argument('--prob_gamma', type=float, default=0.99)
-    parser.add_argument('--softmax_gamma', type=float, default=1.0)
+    parser.add_argument('--softmax_thres_gamma', type=float, default=1.0)
+    parser.add_argument('--softmax_coor_gamma', type=float, default=1.0)
     
     # ETC
     parser.add_argument('--use_position_encoding', default=False, action='store_true', help="Whether to use position encoding")
