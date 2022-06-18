@@ -12,7 +12,6 @@ def get_args():
     parser.add_argument('--dataset_path', default='../dataset/MVTecAD') # ./MVTec
     parser.add_argument('--category', default='hazelnut')
     parser.add_argument('--project_root_path', default=r'./result')
-    #parser.add_argument('--save_src_code', default=True)
     parser.add_argument('--save_anomaly_map', default=True)
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--seed', type=int, default=22)
@@ -26,22 +25,21 @@ def get_args():
     parser.add_argument('--target_embed_dimension', type=int, default=1024) # final aggregated PatchCore Dimensionality
     parser.add_argument('--anomaly_nn', type=int, default=1) # Num. nearest neighbours to use for anomaly detection
     parser.add_argument('--patchsize', type=int, default=3) # neighbourhoodsize for local aggregation
-    parser.add_argument('--faiss_on_gpu', default=False, action='store_true', help="Whether to use gpu on faiss")
     
     # sampler
     parser.add_argument('--subsampling_percentage', '-p', type=float, default=0.01)
     
     # dataset
-    parser.add_argument('--resize', type=int, default=366) # 256
-    parser.add_argument('--imagesize', type=int, default=320) # 224
+    parser.add_argument('--resize', type=int, default=512) # 256
+    parser.add_argument('--imagesize', type=int, default=480) # 224
     
     # coreset_distribution
     parser.add_argument('--dist_coreset_size', type=int, default=2048) # 512
-    parser.add_argument('--dist_padding', type=int, default=3)
-    parser.add_argument('--num_epochs', type=int, default=12)
+    parser.add_argument('--dist_padding', type=int, default=4)
+    parser.add_argument('--num_epochs', type=int, default=7)
     parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--step_size', type=int, default=5)
-    parser.add_argument('--dist_batchsize', type=int, default=1024)
+    parser.add_argument('--dist_batchsize', type=int, default=2048)
     parser.add_argument('--softmax_temperature_alpha', type=float, default=1.0)
     parser.add_argument('--prob_gamma', type=float, default=0.99)
     parser.add_argument('--softmax_thres_gamma', type=float, default=1.0)
@@ -49,7 +47,7 @@ def get_args():
     
     # ETC
     parser.add_argument('--use_position_encoding', default=False, action='store_true', help="Whether to use position encoding")
-    parser.add_argument('--pe_weight', type=float, default=10)
+    parser.add_argument('--pe_weight', type=float, default=5)
     parser.add_argument('--not_use_coreset_distribution', default=False, action='store_true', help='Whether not to use coreset_distribution')
     parser.add_argument('--use_coordinate_distribution', default=False, action='store_true', help='Whether to use coordinate_distribution')
     parser.add_argument('--softmax_temperature_beta', type=float, default=1.0)

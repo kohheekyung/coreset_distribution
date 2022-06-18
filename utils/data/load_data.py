@@ -141,7 +141,8 @@ class Distribution_Dataset_Generator():
     def generate(self, dataloader):
         self.embedding_dir_path = os.path.join('./', f'embeddings_{"+".join(self.args.layer_index)}', self.args.category)
         
-        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
+        #self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
+        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
             
         if torch.cuda.is_available():
             res = faiss.StandardGpuResources()
@@ -156,14 +157,29 @@ class Distribution_Dataset_Generator():
             
             features, ref_num_patches = generate_embedding(self.args, features, self.patch_maker)
             
-            _, embedding_indices = self.dist_coreset_index.search(features.detach().cpu().numpy(), k=1)
+            ## if usign dist_coreset_index_pe
+            W, H = ref_num_patches
+            position_encoding = np.zeros(shape=(1, W, H, 2))
+            for i in range(W) :
+                for j in range(H) : 
+                    position_encoding[0, i, j, 0] = self.args.pe_weight * i / W
+                    position_encoding[0, i, j, 1] = self.args.pe_weight * j / H
+                    
+            position_encoding = position_encoding.reshape(-1, 2)
+            position_encoding = np.tile(position_encoding, (batchsize, 1)).astype(np.float32)
+            
+            position_encoding = position_encoding.reshape(-1, position_encoding.shape[-1])
+
+            features = np.concatenate((features.detach().cpu().numpy(), position_encoding), axis = 1)
+            
+            _, embedding_indices = self.dist_coreset_index.search(features, k=1)
             
             features = features.reshape((batchsize, ref_num_patches[0], ref_num_patches[1], -1))
             embedding_indices = embedding_indices.reshape((batchsize, ref_num_patches[0], ref_num_patches[1]))
             
             pad_width = ((0,),(self.dist_padding,),(self.dist_padding,), (0,))
-            #embedding_pad = np.pad(features.detach().cpu().numpy(), pad_width, "reflect")
-            embedding_pad = np.pad(features.detach().cpu().numpy(), pad_width, "constant")
+            #embedding_pad = np.pad(features, pad_width, "reflect")
+            embedding_pad = np.pad(features, pad_width, "constant")
             
             self.embedding_pad_list.extend([x for x in embedding_pad])
             self.embedding_indices_list.extend([x for x in embedding_indices])
@@ -271,7 +287,8 @@ class Coor_Distribution_Dataset_Generator():
     def generate(self, dataloader):
         self.embedding_dir_path = os.path.join('./', f'embeddings_{"+".join(self.args.layer_index)}', self.args.category)
         
-        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
+        #self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
+        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
             
         if torch.cuda.is_available():
             res = faiss.StandardGpuResources()
@@ -286,7 +303,24 @@ class Coor_Distribution_Dataset_Generator():
             
             features, ref_num_patches = generate_embedding(self.args, features, self.patch_maker)
             
-            _, embedding_indices = self.dist_coreset_index.search(features.detach().cpu().numpy(), k=1)
+            ## if usign dist_coreset_index_pe
+            W, H = ref_num_patches
+            position_encoding = np.zeros(shape=(1, W, H, 2))
+            for i in range(W) :
+                for j in range(H) : 
+                    position_encoding[0, i, j, 0] = self.args.pe_weight * i / W
+                    position_encoding[0, i, j, 1] = self.args.pe_weight * j / H
+                    
+            position_encoding = position_encoding.reshape(-1, 2)
+            position_encoding = np.tile(position_encoding, (batchsize, 1)).astype(np.float32)
+            
+            position_encoding = position_encoding.reshape(-1, position_encoding.shape[-1])
+
+            features = np.concatenate((features.detach().cpu().numpy(), position_encoding), axis = 1)
+            
+            _, embedding_indices = self.dist_coreset_index.search(features, k=1)
+            
+            #_, embedding_indices = self.dist_coreset_index.search(features.detach().cpu().numpy(), k=1)
             
             embedding_indices = embedding_indices.reshape((batchsize, ref_num_patches[0], ref_num_patches[1]))
             
