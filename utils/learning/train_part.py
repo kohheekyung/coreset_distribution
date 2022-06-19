@@ -145,14 +145,15 @@ class Coreset(pl.LightningModule):
         features = self(x)
         
         features, ref_num_patches = generate_embedding_features(self.args, features, self.patch_maker)
+        features = features.detach().cpu().numpy()
         if self.args.cut_edge_embedding :
             features_cut = features.reshape(batchsize, ref_num_patches[0], ref_num_patches[1], -1) # N x W x H x E
             patch_padding = (self.args.patchsize - 1) // 2
             features_cut = features_cut[:, patch_padding:-patch_padding, patch_padding:-patch_padding, :] # N x (W - p) x (H - p) x E
             features_cut = features_cut.reshape(-1, features_cut.shape[-1]) # (N x (W - p) x (H - p)) x E
-            self.embedding_list.extend([x.detach().cpu().numpy() for x in features_cut])
+            self.embedding_list.extend([x for x in features_cut])
         else :
-            self.embedding_list.extend([x.detach().cpu().numpy() for x in features])
+            self.embedding_list.extend([x for x in features])
         
         ## coreset using position encoding
         W, H = ref_num_patches
@@ -165,7 +166,7 @@ class Coreset(pl.LightningModule):
         position_encoding = position_encoding.reshape(-1, 2) # (1 x W x H) x 2
         position_encoding = np.tile(position_encoding, (batchsize, 1)).astype(np.float32) # (N x W x H) x 2
 
-        features_pe = np.concatenate((features.detach().cpu().numpy(), position_encoding), axis = 1) # (N x W x H) x (E + 2)
+        features_pe = np.concatenate((features, position_encoding), axis = 1) # (N x W x H) x (E + 2)
         
         if self.args.cut_edge_embedding :
             features_pe_cut = features_pe.reshape(batchsize, ref_num_patches[0], ref_num_patches[1], -1) # N x W x H x (E + 2)
@@ -445,7 +446,7 @@ class AC_Model(pl.LightningModule):
             self.dist_model.eval() # to stop running_var move (maybe not critical)
         
         self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
-        if self.args.position_encoding_in_distirbution :
+        if self.args.position_encoding_in_distribution :
             self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))  
         self.embedding_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.subsampling_percentage*100)}.faiss'))
         self.embedding_coreset_pe_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.subsampling_percentage*100)}_pe.faiss'))

@@ -157,6 +157,7 @@ class Distribution_Dataset_Generator():
             features = self.forward(x)
             
             features, ref_num_patches = generate_embedding_features(self.args, features, self.patch_maker)
+            features = features.detach().cpu().numpy()
             
             if self.args.position_encoding_in_distribution :
                 W, H = ref_num_patches
@@ -171,7 +172,7 @@ class Distribution_Dataset_Generator():
                 
                 position_encoding = position_encoding.reshape(-1, position_encoding.shape[-1])
 
-                features = np.concatenate((features.detach().cpu().numpy(), position_encoding), axis = 1)
+                features = np.concatenate((features, position_encoding), axis = 1)
             
             _, embedding_indices = self.dist_coreset_index.search(features, k=1)
             
@@ -304,6 +305,7 @@ class Coor_Distribution_Dataset_Generator():
             features = self.forward(x)
             
             features, ref_num_patches = generate_embedding_features(self.args, features, self.patch_maker)
+            features = features.detach().cpu().numpy()
             
             if self.args.position_encoding_in_distribution :
                 W, H = ref_num_patches
@@ -318,7 +320,7 @@ class Coor_Distribution_Dataset_Generator():
                 
                 position_encoding = position_encoding.reshape(-1, position_encoding.shape[-1])
 
-                features = np.concatenate((features.detach().cpu().numpy(), position_encoding), axis = 1)
+                features = np.concatenate((features, position_encoding), axis = 1)
             
             _, embedding_indices = self.dist_coreset_index.search(features, k=1)
             
