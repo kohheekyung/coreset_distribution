@@ -335,7 +335,8 @@ class Coor_Distribution():
 
                 self.coor_model[coor_x_min:coor_x_max+1, coor_y_min:coor_y_max+1, index[i]] += 1.0
                 
-        self.coor_model /= np.sum(self.coor_model, axis = 1).reshape(-1, 1)
+        self.coor_model /= np.sum(self.coor_model, axis = 2).reshape(self.coor_dist_input_size[0], self.coor_dist_input_size[1], 1)
+        self.coor_model = self.coor_model.reshape(-1, self.coor_model.shape[-1])
         np.save(self.coor_model_save_path, self.coor_model)        
     
 class AC_Model(pl.LightningModule):
@@ -380,6 +381,8 @@ class AC_Model(pl.LightningModule):
             self.dist_model.load_state_dict(torch.load(os.path.join(self.embedding_dir_path, f'best_model_{self.args.dist_padding}_{self.args.dist_coreset_size}.pt'))['model'])
         if args.use_coordinate_distribution :
             self.coor_dist_model = np.load(os.path.join(self.embedding_dir_path, f'coor_model_{self.args.dist_coreset_size}.npy'))
+        
+        self.position_encoding_in_dsitribution = args.position_encoding_in_distribution
 
     def init_results_list(self):
         self.gt_list_px_lvl = []
@@ -490,7 +493,7 @@ class AC_Model(pl.LightningModule):
             pad_width = ((self.args.dist_padding,),(self.args.dist_padding,), (0,))         
             #embedding_pad = np.pad(embedding_test.reshape(W, H, -1), pad_width, "reflect") # (W+1) x (H+1) x E
             embedding_pad = np.pad(embedding_test.reshape(W, H, -1), pad_width, "constant") # (W+1) x (H+1) x E
-            if self.args.position_encoding_in_distirbution :
+            if self.position_encoding_in_dsitribution :
                embedding_pad = np.concatenate((embedding_pad, self.pe_pad), axis = 2) # (W+1) x (H+1) x (E+2)
                                 
             neighbors = np.zeros(shape=(W, H, embedding_pad.shape[2]*(pow(self.args.dist_padding*2+1, 2) - 1))) # W x H x NE
