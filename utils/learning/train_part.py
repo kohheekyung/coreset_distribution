@@ -149,7 +149,7 @@ class Coreset(pl.LightningModule):
         if self.args.cut_edge_embedding :
             features_cut = features.reshape(batchsize, ref_num_patches[0], ref_num_patches[1], -1) # N x W x H x E
             patch_padding = (self.args.patchsize - 1) // 2
-            features_cut = features_cut[:, patch_padding:-patch_padding, patch_padding:-patch_padding, :] # N x (W - p) x (H - p) x E
+            features_cut = features_cut[:, patch_padding:features_cut.shape[1]-patch_padding, patch_padding:features_cut.shape[2]-patch_padding, :] # N x (W - p) x (H - p) x E
             features_cut = features_cut.reshape(-1, features_cut.shape[-1]) # (N x (W - p) x (H - p)) x E
             self.embedding_list.extend([x for x in features_cut])
         else :
@@ -171,7 +171,7 @@ class Coreset(pl.LightningModule):
         if self.args.cut_edge_embedding :
             features_pe_cut = features_pe.reshape(batchsize, ref_num_patches[0], ref_num_patches[1], -1) # N x W x H x (E + 2)
             patch_padding = (self.args.patchsize - 1) // 2
-            features_pe_cut = features_pe_cut[:, patch_padding:-patch_padding, patch_padding:-patch_padding, :] # N x (W - p) x (H - p) x E
+            features_pe_cut = features_pe_cut[:, patch_padding:features_pe_cut.shape[1]-patch_padding, patch_padding:features_pe_cut.shape[2]-patch_padding, :] # N x (W - p) x (H - p) x E
             features_pe_cut = features_pe_cut.reshape(-1, features_pe_cut.shape[-1])
             self.embedding_pe_list.extend([x for x in features_pe_cut])
         else :
@@ -181,7 +181,7 @@ class Coreset(pl.LightningModule):
         total_embeddings = np.array(self.embedding_list)
         # Random projection
         #self.randomprojector = SparseRandomProjection(n_components='auto', eps=0.9) # 'auto' => Johnson-Lindenstrauss lemma
-        self.randomprojector = SparseRandomProjection(n_components=128) 
+        self.randomprojector = SparseRandomProjection(n_components=128)
         self.randomprojector.fit(total_embeddings)
         
         # Coreset Subsampling
@@ -510,7 +510,7 @@ class AC_Model(pl.LightningModule):
         if self.args.cut_edge_embedding :
             embedding_score = embedding_score.reshape((ref_num_patches[0], ref_num_patches[1], -1))
             patch_padding = (self.args.patchsize - 1) // 2
-            embedding_score = embedding_score[patch_padding:-patch_padding, patch_padding:-patch_padding, :]
+            embedding_score = embedding_score[patch_padding:embedding_score.shape[0]-patch_padding, patch_padding:embedding_score.shape[1]-patch_padding, :]
             embedding_score = embedding_score.reshape(-1, embedding_score.shape[-1])
         
         max_anomaly_idx = np.argmax(embedding_score[:, 0])
@@ -540,7 +540,7 @@ class AC_Model(pl.LightningModule):
         if self.args.cut_edge_embedding :
             embedding_pe_score = embedding_pe_score.reshape((ref_num_patches[0], ref_num_patches[1], -1))
             patch_padding = (self.args.patchsize - 1) // 2
-            embedding_pe_score = embedding_pe_score[patch_padding:-patch_padding, patch_padding:-patch_padding, :]
+            embedding_pe_score = embedding_pe_score[patch_padding:embedding_pe_score.shape[0]-patch_padding, patch_padding:embedding_pe_score.shape[1]-patch_padding, :]
             embedding_pe_score = embedding_pe_score.reshape(-1, embedding_pe_score.shape[-1])
         
         max_anomaly_idx = np.argmax(embedding_pe_score[:, 0])
@@ -618,7 +618,7 @@ class AC_Model(pl.LightningModule):
                 patch_padding = (self.args.patchsize - 1) // 2
                 pad_width = ((patch_padding,),(patch_padding,))
                 
-                anomaly_map_nb = anomaly_map_nb[patch_padding:-patch_padding, patch_padding:-patch_padding]
+                anomaly_map_nb = anomaly_map_nb[patch_padding:anomaly_map_nb.shape[0]-patch_padding, patch_padding:anomaly_map_nb.shape[1]-patch_padding]
                 anomaly_img_score_nb = np.max(anomaly_map_nb)
                 anomaly_map_nb = np.pad(anomaly_map_nb, pad_width, 'edge')
             else : 
@@ -629,7 +629,7 @@ class AC_Model(pl.LightningModule):
                 patch_padding = (self.args.patchsize - 1) // 2
                 pad_width = ((patch_padding,),(patch_padding,))
                 
-                anomaly_map_topk1 = anomaly_map_topk1[patch_padding:-patch_padding, patch_padding:-patch_padding]
+                anomaly_map_topk1 = anomaly_map_topk1[patch_padding:anomaly_map_topk1.shape[0]-patch_padding, patch_padding:anomaly_map_topk1.shape[1]-patch_padding]
                 anomaly_img_score_topk1 = np.max(anomaly_map_topk1)
                 anomaly_map_topk1 = np.pad(anomaly_map_topk1, pad_width, 'edge')
             else : 
