@@ -9,7 +9,7 @@ from torch.nn import functional as F
 from utils.data.transforms import Transform, GT_Transform
 import faiss
 import numpy as np
-from utils.common.embedding import embedding_concat, generate_embedding
+from utils.common.embedding import embedding_concat, generate_embedding_features
 from utils.common.image_processing import PatchMaker, ForwardHook, LastLayerToExtractReachedException
 from utils.common.backbones import Backbone
 
@@ -77,7 +77,7 @@ def Train_Dataloader(args):
     gt_transforms = GT_Transform(args.resize, args.imagesize)
 
     image_datasets = MVTecDataset(root=os.path.join(args.dataset_path,args.category), transform=data_transforms, gt_transform=gt_transforms, phase='train')
-    train_loader = DataLoader(image_datasets, batch_size=args.patchcore_batchsize, shuffle=True, num_workers=args.num_workers) #, pin_memory=True)
+    train_loader = DataLoader(image_datasets, batch_size=4, shuffle=True, num_workers=args.num_workers) #, pin_memory=True)
     return train_loader
 
 def Test_Dataloader(args):
@@ -141,8 +141,9 @@ class Distribution_Dataset_Generator():
     def generate(self, dataloader):
         self.embedding_dir_path = os.path.join('./', f'embeddings_{"+".join(self.args.layer_index)}', self.args.category)
         
-        #self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
-        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
+        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
+        if self.args.position_encoding_in_distribution :
+            self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
             
         if torch.cuda.is_available():
             res = faiss.StandardGpuResources()
@@ -155,22 +156,22 @@ class Distribution_Dataset_Generator():
 
             features = self.forward(x)
             
-            features, ref_num_patches = generate_embedding(self.args, features, self.patch_maker)
+            features, ref_num_patches = generate_embedding_features(self.args, features, self.patch_maker)
             
-            ## if usign dist_coreset_index_pe
-            W, H = ref_num_patches
-            position_encoding = np.zeros(shape=(1, W, H, 2))
-            for i in range(W) :
-                for j in range(H) : 
-                    position_encoding[0, i, j, 0] = self.args.pe_weight * i / W
-                    position_encoding[0, i, j, 1] = self.args.pe_weight * j / H
-                    
-            position_encoding = position_encoding.reshape(-1, 2)
-            position_encoding = np.tile(position_encoding, (batchsize, 1)).astype(np.float32)
-            
-            position_encoding = position_encoding.reshape(-1, position_encoding.shape[-1])
+            if self.args.position_encoding_in_distribution :
+                W, H = ref_num_patches
+                position_encoding = np.zeros(shape=(1, W, H, 2))
+                for i in range(W) :
+                    for j in range(H) : 
+                        position_encoding[0, i, j, 0] = self.args.pe_weight * i / W
+                        position_encoding[0, i, j, 1] = self.args.pe_weight * j / H
+                        
+                position_encoding = position_encoding.reshape(-1, 2)
+                position_encoding = np.tile(position_encoding, (batchsize, 1)).astype(np.float32)
+                
+                position_encoding = position_encoding.reshape(-1, position_encoding.shape[-1])
 
-            features = np.concatenate((features.detach().cpu().numpy(), position_encoding), axis = 1)
+                features = np.concatenate((features.detach().cpu().numpy(), position_encoding), axis = 1)
             
             _, embedding_indices = self.dist_coreset_index.search(features, k=1)
             
@@ -215,12 +216,12 @@ class Distribution_Dataset_Generator():
         embedding_indices = self.embedding_indices_list[list_idx] # W x H
         
         index = embedding_indices[i_idx, j_idx]
-        neighbor = np.zeros(shape=(0,))
-        for di in range(-self.dist_padding, self.dist_padding+1) :
-            for dj in range(-self.dist_padding, self.dist_padding+1) :
-                if di == 0 and dj == 0 :
-                    continue
-                neighbor = np.concatenate((neighbor, embedding_pad[i_idx+di+self.dist_padding, j_idx+dj+self.dist_padding]))
+        
+        # delete middle features in neighbor
+        neighbor = embedding_pad[i_idx:i_idx + self.dist_padding * 2 + 1, j_idx:j_idx + self.dist_padding * 2 + 1].reshape(-1)        
+        mid_index = (pow(self.dist_padding * 2 + 1, 2) + 1) // 2        
+        neighbor = np.concatenate([neighbor[:self.embedding_pad_list[0].shape[2]*mid_index], neighbor[self.embedding_pad_list[0].shape[2]*(mid_index+1):]])
+        
         return neighbor.astype(np.float32), index
     
 def Distribution_Train_Dataloader(args, dataloader):
@@ -287,8 +288,9 @@ class Coor_Distribution_Dataset_Generator():
     def generate(self, dataloader):
         self.embedding_dir_path = os.path.join('./', f'embeddings_{"+".join(self.args.layer_index)}', self.args.category)
         
-        #self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
-        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
+        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
+        if self.args.position_encoding_in_distribution :
+            self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
             
         if torch.cuda.is_available():
             res = faiss.StandardGpuResources()
@@ -301,33 +303,31 @@ class Coor_Distribution_Dataset_Generator():
 
             features = self.forward(x)
             
-            features, ref_num_patches = generate_embedding(self.args, features, self.patch_maker)
+            features, ref_num_patches = generate_embedding_features(self.args, features, self.patch_maker)
             
-            ## if usign dist_coreset_index_pe
-            W, H = ref_num_patches
-            position_encoding = np.zeros(shape=(1, W, H, 2))
-            for i in range(W) :
-                for j in range(H) : 
-                    position_encoding[0, i, j, 0] = self.args.pe_weight * i / W
-                    position_encoding[0, i, j, 1] = self.args.pe_weight * j / H
-                    
-            position_encoding = position_encoding.reshape(-1, 2)
-            position_encoding = np.tile(position_encoding, (batchsize, 1)).astype(np.float32)
-            
-            position_encoding = position_encoding.reshape(-1, position_encoding.shape[-1])
+            if self.args.position_encoding_in_distribution :
+                W, H = ref_num_patches
+                position_encoding = np.zeros(shape=(1, W, H, 2))
+                for i in range(W) :
+                    for j in range(H) : 
+                        position_encoding[0, i, j, 0] = self.args.pe_weight * i / W
+                        position_encoding[0, i, j, 1] = self.args.pe_weight * j / H
+                        
+                position_encoding = position_encoding.reshape(-1, 2)
+                position_encoding = np.tile(position_encoding, (batchsize, 1)).astype(np.float32)
+                
+                position_encoding = position_encoding.reshape(-1, position_encoding.shape[-1])
 
-            features = np.concatenate((features.detach().cpu().numpy(), position_encoding), axis = 1)
+                features = np.concatenate((features.detach().cpu().numpy(), position_encoding), axis = 1)
             
             _, embedding_indices = self.dist_coreset_index.search(features, k=1)
-            
-            #_, embedding_indices = self.dist_coreset_index.search(features.detach().cpu().numpy(), k=1)
             
             embedding_indices = embedding_indices.reshape((batchsize, ref_num_patches[0], ref_num_patches[1]))
             
             self.embedding_indices_list.extend([x for x in embedding_indices])
             
     def get_data_size(self):
-        input_size = (self.embedding_indices_list[0].shape[0], self.embedding_indices_list[0].shape[0])
+        input_size = (self.embedding_indices_list[0].shape[0], self.embedding_indices_list[0].shape[1])
         output_size = self.args.dist_coreset_size
         return input_size, output_size
 
@@ -365,5 +365,5 @@ def Coor_Distribution_Train_Dataloader(args, dataloader):
     distribution_dataset_generator.generate(dataloader)
     dist_input_size, dist_output_size = distribution_dataset_generator.get_data_size()
 
-    distribution_train_dataloader= DataLoader(distribution_dataset_generator, batch_size=args.dist_batchsize, shuffle=False, num_workers=args.num_workers) #, pin_memory=True)
+    distribution_train_dataloader= DataLoader(distribution_dataset_generator, batch_size=8192, shuffle=False, num_workers=args.num_workers) #, pin_memory=True)
     return distribution_train_dataloader, dist_input_size, dist_output_size

@@ -24,7 +24,7 @@ def reshape_embedding(embedding):
                 embedding_list.append(embedding[k, :, i, j])
     return embedding_list
 
-def generate_embedding(args, features, patch_maker):
+def generate_embedding_features(args, features, patch_maker):
     features = [features[layer] for layer in args.layer_index]
     '''
     # m = torch.nn.AvgPool2d(kernel_size = args.patchsize, stride = 1, padding = 0, count_include_pad = False)

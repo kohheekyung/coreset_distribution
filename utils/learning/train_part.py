@@ -16,7 +16,7 @@ from sklearn.metrics import confusion_matrix
 
 from utils.common.visualize import visualize_TSNE
 from utils.data.transforms import INV_Normalize
-from utils.common.embedding import generate_embedding, embedding_concat, reshape_embedding
+from utils.common.embedding import generate_embedding_features, embedding_concat, reshape_embedding
 from utils.learning.model import Distribution_Model
 from utils.common.image_processing import PatchMaker, ForwardHook, LastLayerToExtractReachedException
 from utils.common.backbones import Backbone
@@ -138,18 +138,18 @@ class Coreset(pl.LightningModule):
         self.embedding_pe_list = []
 
     def training_step(self, batch, batch_idx):
-        x, _, _, file_name, _ = batch
+        x, _, _, _, _ = batch
         
         batchsize = x.shape[0]
            
         features = self(x)
         
-        features, ref_num_patches = generate_embedding(self.args, features, self.patch_maker)
+        features, ref_num_patches = generate_embedding_features(self.args, features, self.patch_maker)
         if self.args.cut_edge_embedding :
             features_cut = features.reshape(batchsize, ref_num_patches[0], ref_num_patches[1], -1) # N x W x H x E
             patch_padding = (self.args.patchsize - 1) // 2
             features_cut = features_cut[:, patch_padding:-patch_padding, patch_padding:-patch_padding, :] # N x (W - p) x (H - p) x E
-            features_cut = features_cut.reshape(-1, features_cut.shape[-1])
+            features_cut = features_cut.reshape(-1, features_cut.shape[-1]) # (N x (W - p) x (H - p)) x E
             self.embedding_list.extend([x.detach().cpu().numpy() for x in features_cut])
         else :
             self.embedding_list.extend([x.detach().cpu().numpy() for x in features])
@@ -162,13 +162,13 @@ class Coreset(pl.LightningModule):
                 position_encoding[0, i, j, 0] = self.args.pe_weight * i / W
                 position_encoding[0, i, j, 1] = self.args.pe_weight * j / H
                 
-        position_encoding = position_encoding.reshape(-1, 2)
-        position_encoding = np.tile(position_encoding, (batchsize, 1)).astype(np.float32)
+        position_encoding = position_encoding.reshape(-1, 2) # (1 x W x H) x 2
+        position_encoding = np.tile(position_encoding, (batchsize, 1)).astype(np.float32) # (N x W x H) x 2
 
-        features_pe = np.concatenate((features.detach().cpu().numpy(), position_encoding), axis = 1)
+        features_pe = np.concatenate((features.detach().cpu().numpy(), position_encoding), axis = 1) # (N x W x H) x (E + 2)
         
         if self.args.cut_edge_embedding :
-            features_pe_cut = features_pe.reshape(batchsize, ref_num_patches[0], ref_num_patches[1], -1) # N x W x H x E
+            features_pe_cut = features_pe.reshape(batchsize, ref_num_patches[0], ref_num_patches[1], -1) # N x W x H x (E + 2)
             patch_padding = (self.args.patchsize - 1) // 2
             features_pe_cut = features_pe_cut[:, patch_padding:-patch_padding, patch_padding:-patch_padding, :] # N x (W - p) x (H - p) x E
             features_pe_cut = features_pe_cut.reshape(-1, features_pe_cut.shape[-1])
@@ -192,10 +192,6 @@ class Coreset(pl.LightningModule):
         selected_idx = selector.select_coreset_idxs()
         self.embedding_coreset = total_embeddings[selected_idx][:embedding_coreset_size]
         self.dist_coreset = total_embeddings[selected_idx][:dist_coreset_size]
-                
-        print('initial embedding size : ', total_embeddings.shape)
-        print('final embedding coreset size : ', self.embedding_coreset.shape)
-        print('final dist coreset size : ', self.dist_coreset.shape)
         
         # save to faiss
         self.embedding_coreset_index = faiss.IndexFlatL2(self.embedding_coreset.shape[1])
@@ -205,6 +201,10 @@ class Coreset(pl.LightningModule):
         self.dist_coreset_index = faiss.IndexFlatL2(self.dist_coreset.shape[1])
         self.dist_coreset_index.add(self.dist_coreset)
         faiss.write_index(self.dist_coreset_index, os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
+        
+        print('initial embedding size : ', total_embeddings.shape)
+        print('final embedding coreset size : ', self.embedding_coreset.shape)
+        print('final dist coreset size : ', self.dist_coreset.shape)
 
         ## coreset using position encoding
         total_embeddings_pe = np.array(self.embedding_pe_list)
@@ -222,12 +222,8 @@ class Coreset(pl.LightningModule):
         selected_idx = selector.select_coreset_idxs()
         self.embedding_coreset = total_embeddings_pe[selected_idx][:embedding_coreset_size]
         self.dist_coreset = total_embeddings_pe[selected_idx][:dist_coreset_size]
-                
-        print('initial embedding_pe size : ', total_embeddings_pe.shape)
-        print('final embedding coreset_pe size : ', self.embedding_coreset.shape)
-        print('final dist coreset_pe size : ', self.dist_coreset.shape)
         
-        #faiss
+        # save to faiss
         self.embedding_coreset_index = faiss.IndexFlatL2(self.embedding_coreset.shape[1])
         self.embedding_coreset_index.add(self.embedding_coreset)
         faiss.write_index(self.embedding_coreset_index, os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.subsampling_percentage*100)}_pe.faiss'))
@@ -235,6 +231,10 @@ class Coreset(pl.LightningModule):
         self.dist_coreset_index = faiss.IndexFlatL2(self.dist_coreset.shape[1])
         self.dist_coreset_index.add(self.dist_coreset)
         faiss.write_index(self.dist_coreset_index, os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
+        
+        print('initial embedding_pe size : ', total_embeddings_pe.shape)
+        print('final embedding coreset_pe size : ', self.embedding_coreset.shape)
+        print('final dist coreset_pe size : ', self.dist_coreset.shape)
 
     def configure_optimizers(self):
         return None
@@ -317,7 +317,7 @@ class Coor_Distribution():
         
         self.coor_dist_input_size = coor_dist_input_size
         self.coor_dist_output_size = coor_dist_output_size
-        self.coor_model = np.zeros(shape = (coor_dist_input_size[0] * coor_dist_input_size[1], coor_dist_output_size), dtype=np.float32)
+        self.coor_model = np.zeros(shape = (coor_dist_input_size[0], coor_dist_input_size[1], coor_dist_output_size), dtype=np.float32)
         self.coor_model_save_path = os.path.join(self.embedding_dir_path, f'coor_model_{self.args.dist_coreset_size}.npy')
         self.dist_padding = args.dist_padding
         
@@ -327,15 +327,13 @@ class Coor_Distribution():
             coordinate = coordinate.numpy().astype(int)
             index = index.numpy().astype(int)
             for i in range(len(index)) :
-                for dx in range(-self.dist_padding, self.dist_padding+1) :
-                    coor_x = coordinate[i][0] + dx
-                    if coor_x not in range(0, self.coor_dist_input_size[0]) :
-                        continue
-                    for dy in range(-self.dist_padding, self.dist_padding+1) :                        
-                        coor_y = coordinate[i][1] + dy
-                        if coor_y not in range(0, self.coor_dist_input_size[1]) :
-                            continue                
-                        self.coor_model[coor_x * self.coor_dist_input_size[1] + coor_y][index[i]] += 1.0
+                coor_x_min = max(0, coordinate[i][0] - self.dist_padding)
+                coor_x_max = min(self.coor_dist_input_size[0] - 1, coordinate[i][0] + self.dist_padding)
+                coor_y_min = max(0, coordinate[i][1] - self.dist_padding)
+                coor_y_max = min(self.coor_dist_input_size[1] - 1, coordinate[i][1] + self.dist_padding)
+
+                self.coor_model[coor_x_min:coor_x_max+1, coor_y_min:coor_y_max+1, index[i]] += 1.0
+                
         self.coor_model /= np.sum(self.coor_model, axis = 1).reshape(-1, 1)
         np.save(self.coor_model_save_path, self.coor_model)        
     
@@ -446,19 +444,17 @@ class AC_Model(pl.LightningModule):
         if not self.args.not_use_coreset_distribution:
             self.dist_model.eval() # to stop running_var move (maybe not critical)
         
-        #self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
-        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
+        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
+        if self.args.position_encoding_in_distirbution :
+            self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))  
         self.embedding_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.subsampling_percentage*100)}.faiss'))
+        self.embedding_coreset_pe_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.subsampling_percentage*100)}_pe.faiss'))
+        
         if torch.cuda.is_available():
             res = faiss.StandardGpuResources()
             self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0, self.dist_coreset_index)
-            self.embedding_coreset_index = faiss.index_cpu_to_gpu(res, 0, self.embedding_coreset_index)
-
-        if self.args.use_position_encoding :
-            self.embedding_coreset_pe_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.subsampling_percentage*100)}_pe.faiss'))
-            if torch.cuda.is_available():
-                res = faiss.StandardGpuResources()
-                self.embedding_coreset_pe_index = faiss.index_cpu_to_gpu(res, 0, self.embedding_coreset_pe_index)
+            self.embedding_coreset_index = faiss.index_cpu_to_gpu(res, 0, self.embedding_coreset_index)            
+            self.embedding_coreset_pe_index = faiss.index_cpu_to_gpu(res, 0, self.embedding_coreset_pe_index)
 
         self.init_results_list()
         self.embedding_dir_path, self.sample_path, self.source_code_save_path = prep_dirs(self.logger.log_dir, self.args)
@@ -472,7 +468,7 @@ class AC_Model(pl.LightningModule):
         
         features = self(x)
         
-        features, ref_num_patches = generate_embedding(self.args, features, self.patch_maker)
+        features, ref_num_patches = generate_embedding_features(self.args, features, self.patch_maker)
             
         embedding_test = features.detach().cpu().numpy() # (W x H) x E
 
@@ -493,25 +489,23 @@ class AC_Model(pl.LightningModule):
             pad_width = ((self.args.dist_padding,),(self.args.dist_padding,), (0,))         
             #embedding_pad = np.pad(embedding_test.reshape(W, H, -1), pad_width, "reflect") # (W+1) x (H+1) x E
             embedding_pad = np.pad(embedding_test.reshape(W, H, -1), pad_width, "constant") # (W+1) x (H+1) x E
-            if self.args.use_position_encoding :
+            if self.args.position_encoding_in_distirbution :
                embedding_pad = np.concatenate((embedding_pad, self.pe_pad), axis = 2) # (W+1) x (H+1) x (E+2)
-               #embedding_pad = np.concatenate((embedding_pad + self.pe_pad[:1], embedding_pad + self.pe_pad[1:]), axis = 0) # 2E x (W+1) x (H+1)    
                                 
             neighbors = np.zeros(shape=(W, H, embedding_pad.shape[2]*(pow(self.args.dist_padding*2+1, 2) - 1))) # W x H x NE
             # construct neighbor features
             for i_idx in range(W) :
                 for j_idx in range(H) :
-                    neighbor = np.zeros(shape=(0,))
-                    for di in range(-self.args.dist_padding, self.args.dist_padding+1) :
-                        for dj in range(-self.args.dist_padding, self.args.dist_padding+1) :
-                            if di == 0 and dj == 0 :
-                                continue
-                            neighbor = np.concatenate((neighbor, embedding_pad[i_idx+di+self.args.dist_padding, j_idx+dj+self.args.dist_padding]))
+                    # delete middle features in neighbor
+                    neighbor = embedding_pad[i_idx:i_idx + self.args.dist_padding * 2 + 1, j_idx:j_idx + self.args.dist_padding * 2 + 1].reshape(-1)
+                    mid_index = (pow(self.args.dist_padding * 2 + 1, 2) + 1) // 2
+                    neighbor = np.concatenate([neighbor[:embedding_pad.shape[2]*mid_index], neighbor[embedding_pad.shape[2]*(mid_index+1):]])
+        
                     neighbors[i_idx, j_idx] = neighbor
 
         ## patchcore        
         embedding_score, embedding_indices = self.embedding_coreset_index.search(embedding_test, k=self.args.anomaly_nn) # (W x H) x self.args.n_neighbors
-        embedding_score = np.sqrt(embedding_score)        
+        embedding_score = np.sqrt(embedding_score)
         if self.args.cut_edge_embedding :
             embedding_score = embedding_score.reshape((ref_num_patches[0], ref_num_patches[1], -1))
             patch_padding = (self.args.patchsize - 1) // 2
@@ -536,36 +530,33 @@ class AC_Model(pl.LightningModule):
             anomaly_map_patchcore = embedding_score[:, 0].reshape(ref_num_patches)
         
         ## patchcore using position encoding
-        anomaly_img_score_pe = anomaly_img_score_patchcore
-        anomaly_map_pe = anomaly_map_patchcore
-        if self.args.use_position_encoding :
-            position_encoding_reshape = self.position_encoding.reshape(-1, 2)
-            embedding_pe_test = np.concatenate((embedding_test, position_encoding_reshape), axis = 1).astype(np.float32)
+        position_encoding_reshape = self.position_encoding.reshape(-1, 2)
+        embedding_pe_test = np.concatenate((embedding_test, position_encoding_reshape), axis = 1).astype(np.float32)
 
-            embedding_pe_score, embedding_pe_indices = self.embedding_coreset_pe_index.search(embedding_pe_test, k=self.args.anomaly_nn) # (W x H) x self.args.n_neighbors
-            embedding_pe_score = np.sqrt(embedding_pe_score)
-            
-            if self.args.cut_edge_embedding :
-                embedding_pe_score = embedding_pe_score.reshape((ref_num_patches[0], ref_num_patches[1], -1))
-                patch_padding = (self.args.patchsize - 1) // 2
-                embedding_pe_score = embedding_pe_score[patch_padding:-patch_padding, patch_padding:-patch_padding, :]
-                embedding_pe_score = embedding_pe_score.reshape(-1, embedding_pe_score.shape[-1])
-            
-            max_anomaly_idx = np.argmax(embedding_pe_score[:, 0])
-            max_embedding_score = embedding_pe_score[max_anomaly_idx, 0] # maximum embedding score
-            if self.args.anomaly_nn == 1 :
-                weights_from_code = 1
-            else :
-                weights_from_code = 1 - np.exp(max_embedding_score) / np.sum(np.exp(embedding_pe_score[max_anomaly_idx]))
+        embedding_pe_score, embedding_pe_indices = self.embedding_coreset_pe_index.search(embedding_pe_test, k=self.args.anomaly_nn) # (W x H) x self.args.n_neighbors
+        embedding_pe_score = np.sqrt(embedding_pe_score)
+        
+        if self.args.cut_edge_embedding :
+            embedding_pe_score = embedding_pe_score.reshape((ref_num_patches[0], ref_num_patches[1], -1))
+            patch_padding = (self.args.patchsize - 1) // 2
+            embedding_pe_score = embedding_pe_score[patch_padding:-patch_padding, patch_padding:-patch_padding, :]
+            embedding_pe_score = embedding_pe_score.reshape(-1, embedding_pe_score.shape[-1])
+        
+        max_anomaly_idx = np.argmax(embedding_pe_score[:, 0])
+        max_embedding_score = embedding_pe_score[max_anomaly_idx, 0] # maximum embedding score
+        if self.args.anomaly_nn == 1 :
+            weights_from_code = 1
+        else :
+            weights_from_code = 1 - np.exp(max_embedding_score) / np.sum(np.exp(embedding_pe_score[max_anomaly_idx]))
 
-            anomaly_img_score_pe= weights_from_code * max_embedding_score # Image-level score
-            #anomaly_img_score_pe= max_embedding_score # Image-level score
-            if self.args.cut_edge_embedding :
-                anomaly_map_pe = embedding_pe_score[:, 0].reshape((ref_num_patches[0] - 2 * patch_padding, ref_num_patches[1] - 2 * patch_padding))
-                pad_width = ((patch_padding,),(patch_padding,))
-                anomaly_map_pe = np.pad(anomaly_map_pe, pad_width, 'edge')
-            else : 
-                anomaly_map_pe = embedding_pe_score[:, 0].reshape(ref_num_patches)
+        anomaly_img_score_pe= weights_from_code * max_embedding_score # Image-level score
+        #anomaly_img_score_pe= max_embedding_score # Image-level score
+        if self.args.cut_edge_embedding :
+            anomaly_map_pe = embedding_pe_score[:, 0].reshape((ref_num_patches[0] - 2 * patch_padding, ref_num_patches[1] - 2 * patch_padding))
+            pad_width = ((patch_padding,),(patch_padding,))
+            anomaly_map_pe = np.pad(anomaly_map_pe, pad_width, 'edge')
+        else : 
+            anomaly_map_pe = embedding_pe_score[:, 0].reshape(ref_num_patches)
 
         ## using neighbor distribution
         anomaly_img_score_nb = anomaly_img_score_topk1 = anomaly_img_score_patchcore
@@ -582,13 +573,19 @@ class AC_Model(pl.LightningModule):
 
             softmax_temp = F.softmax(y_hat / self.args.softmax_temperature_alpha, dim = -1).cpu().numpy() # (W x H) x self.dist_coreset_indesx.ntotal
 
-            softmax_thres = softmax_temp  > self.args.softmax_thres_gamma / 2048.0 # threshold of softmax
+            softmax_thres = softmax_temp  > self.args.softmax_thres_gamma / 2048 # threshold of softmax
             #softmax_thres = (softmax_temp  > self.args.softmax_thres_gamma / 2048) * (softmax_coor > self.args.softmax_coor_gamma / 2048)
             #softmax_thres = 1 - (softmax_temp  <= self.args.softmax_gamma / 2048) * (softmax_coor <= 1 / 2048)
-            softmax_coor_thres = softmax_coor > self.args.softmax_coor_gamma / 2048 # threshold of softmax
+            if self.args.use_coordinate_distribution :
+                softmax_coor_thres = softmax_coor > self.args.softmax_coor_gamma / 2048 # threshold of softmax
+            else : 
+                softmax_coor_thres = softmax_thres
             
-            #dist_distances, dist_indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
-            dist_distances, dist_indices = self.dist_coreset_index.search(embedding_pe_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
+            if self.args.position_encoding_in_distribution :
+                dist_distances, dist_indices = self.dist_coreset_index.search(embedding_pe_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
+            else :
+                dist_distances, dist_indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
+            
             dist_distances = np.sqrt(dist_distances)
             prob_embedding = calc_prob_embedding(dist_distances, gamma=self.args.prob_gamma)
             
