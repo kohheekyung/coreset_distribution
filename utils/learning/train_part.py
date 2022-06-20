@@ -1,3 +1,4 @@
+from pyrsistent import b
 import torch
 from torch.nn import functional as F
 from torchvision.transforms import functional as TF
@@ -319,7 +320,8 @@ class Coor_Distribution():
         self.coor_dist_input_size = coor_dist_input_size
         self.coor_dist_output_size = coor_dist_output_size
         self.coor_model = np.zeros(shape = (coor_dist_input_size[0], coor_dist_input_size[1], coor_dist_output_size), dtype=np.float32)
-        self.coor_model_save_path = os.path.join(self.embedding_dir_path, f'coor_model_{self.args.dist_coreset_size}.npy')
+        #self.coor_model_save_path = os.path.join(self.embedding_dir_path, f'coor_model_{self.args.dist_coreset_size}.npy')
+        self.coor_model_save_path = os.path.join(self.embedding_dir_path, f'coor_model_{int(self.args.subsampling_percentage*100)}.npy')
         self.dist_padding = args.dist_padding
         
     def fit(self, train_dataloader) :
@@ -380,7 +382,7 @@ class AC_Model(pl.LightningModule):
             self.dist_model = Distribution_Model(args, dist_input_size, dist_output_size)        
             self.dist_model.load_state_dict(torch.load(os.path.join(self.embedding_dir_path, f'best_model_{self.args.dist_padding}_{self.args.dist_coreset_size}.pt'))['model'])
         if args.use_coordinate_distribution :
-            self.coor_dist_model = np.load(os.path.join(self.embedding_dir_path, f'coor_model_{self.args.dist_coreset_size}.npy'))
+            self.coor_dist_model = np.load(os.path.join(self.embedding_dir_path, f'coor_model_{int(self.args.subsampling_percentage*100)}.npy'))
         
         self.position_encoding_in_dsitribution = args.position_encoding_in_distribution
 
@@ -457,8 +459,10 @@ class AC_Model(pl.LightningModule):
         if torch.cuda.is_available():
             res = faiss.StandardGpuResources()
             self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0, self.dist_coreset_index)
-            self.embedding_coreset_index = faiss.index_cpu_to_gpu(res, 0, self.embedding_coreset_index)            
+            self.embedding_coreset_index = faiss.index_cpu_to_gpu(res, 0, self.embedding_coreset_index)
             self.embedding_coreset_pe_index = faiss.index_cpu_to_gpu(res, 0, self.embedding_coreset_pe_index)
+            
+        self.embedding_coreset_index_cpu = faiss.index_gpu_to_cpu(self.embedding_coreset_index)
 
         self.init_results_list()
         self.embedding_dir_path, self.sample_path, self.source_code_save_path = prep_dirs(self.logger.log_dir, self.args)
@@ -567,55 +571,70 @@ class AC_Model(pl.LightningModule):
         anomaly_map_nb = anomaly_map_topk1 = anomaly_map_patchcore
         if not self.args.not_use_coreset_distribution:
             neighbors = neighbors.reshape(-1, neighbors.shape[2]).astype(np.float32) # (W x H) x NE
+            '''
             y_hat = self.dist_model(torch.tensor(neighbors).cuda()).cpu() # (W x H) x self.dist_coreset_index.ntotal
+            '''
             
             if self.args.use_coordinate_distribution :
                 softmax_coor = self.coor_dist_model
             
-            anomaly_pxl_likelihood = np.zeros(shape=(neighbors.shape[0])) # (W x H)
-            anomaly_pxl_topk1 = np.zeros(shape=(neighbors.shape[0])) # (W x H)
-
+            '''
             softmax_temp = F.softmax(y_hat / self.args.softmax_temperature_alpha, dim = -1).cpu().numpy() # (W x H) x self.dist_coreset_indesx.ntotal
 
             softmax_thres = softmax_temp  > self.args.softmax_thres_gamma / 2048 # threshold of softmax
+            '''
             #softmax_thres = (softmax_temp  > self.args.softmax_thres_gamma / 2048) * (softmax_coor > self.args.softmax_coor_gamma / 2048)
             #softmax_thres = 1 - (softmax_temp  <= self.args.softmax_gamma / 2048) * (softmax_coor <= 1 / 2048)
             if self.args.use_coordinate_distribution :
-                softmax_coor_thres = softmax_coor > self.args.softmax_coor_gamma / 2048 # threshold of softmax
+                softmax_coor_thres = softmax_coor > self.args.softmax_coor_gamma / self.embedding_coreset_index.ntotal # threshold of softmax
             else : 
-                softmax_coor_thres = softmax_thres
+                #softmax_coor_thres = softmax_thres
+                softmax_coor_thres = None
             
+            embed_distances, embed_indices = self.embedding_coreset_index_cpu.search(embedding_test, k=self.embedding_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
+            embed_distances = np.sqrt(embed_distances)
+            embed_prob = calc_prob_embedding(embed_distances, gamma=self.args.prob_gamma)
+            
+            '''
             if self.args.position_encoding_in_distribution :
                 dist_distances, dist_indices = self.dist_coreset_index.search(embedding_pe_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
             else :
                 dist_distances, dist_indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
-            
+
             dist_distances = np.sqrt(dist_distances)
-            prob_embedding = calc_prob_embedding(dist_distances, gamma=self.args.prob_gamma)
+            dist_prob = calc_prob_embedding(dist_distances, gamma=self.args.prob_gamma)
+
             
             #softmax_temp_inverse = np.zeros_like(softmax_temp)
             softmax_thres_inverse = np.zeros_like(softmax_thres)
-            softmax_coor_thres_inverse = np.zeros_like(softmax_coor_thres)
             for i in range(neighbors.shape[0]) :
                 for k in range(self.dist_coreset_index.ntotal) :
                     #softmax_temp_inverse[i, k] = softmax_temp[i, dist_indices[i, k]]
                     softmax_thres_inverse[i, k] = softmax_thres[i, dist_indices[i, k]]
-                    softmax_coor_thres_inverse[i, k] = softmax_coor_thres[i, dist_indices[i, k]]
+            '''
                     
+            softmax_coor_thres_inverse = np.zeros_like(softmax_coor_thres)
             for i in range(neighbors.shape[0]) :
-                softmax_thres_inverse[i, -1] = True
-                softmax_coor_thres_inverse[i, -1] = True
+                for k in range(self.embedding_coreset_index.ntotal) :
+                    softmax_coor_thres_inverse[i, k] = softmax_coor_thres[i, embed_indices[i, k]]
+                    
+            '''
+            softmax_thres_inverse[:, -1] = True
+            '''
+            softmax_coor_thres_inverse[:, -1] = True
                     
             #anomaly_pxl_likelihood = np.sum(dist_distances * softmax_temp_inverse, axis = 1)
             #anomaly_pxl_likelihood = np.apply_along_axis(lambda a : np.min(a[a!=0]), 1, dist_distances * softmax_thres_inverse)
             
-            anomaly_pxl_likelihood = np.max(prob_embedding * softmax_thres_inverse, axis = 1)
+            '''
+            anomaly_pxl_likelihood = np.max(dist_prob * softmax_thres_inverse, axis = 1)
             anomaly_pxl_likelihood = -np.log(anomaly_pxl_likelihood)
-            anomaly_pxl_topk1 = np.max(prob_embedding * softmax_coor_thres_inverse, axis = 1)
+            '''
+            anomaly_pxl_topk1 = np.max(embed_prob * softmax_coor_thres_inverse, axis = 1)
             anomaly_pxl_topk1 = -np.log(anomaly_pxl_topk1)
             #anomaly_pxl_topk1 = np.apply_along_axis(lambda a : np.min(a[a!=0]), 1, dist_distances * softmax_coor_thres_inverse)
             #anomaly_pxl_likelihood = anomaly_pxl_topk1
-
+            '''
             anomaly_map_nb = anomaly_pxl_likelihood.reshape(ref_num_patches)
             if self.args.cut_edge_embedding :
                 patch_padding = (self.args.patchsize - 1) // 2
@@ -625,7 +644,8 @@ class AC_Model(pl.LightningModule):
                 anomaly_img_score_nb = np.max(anomaly_map_nb)
                 anomaly_map_nb = np.pad(anomaly_map_nb, pad_width, 'edge')
             else : 
-                anomaly_img_score_nb = np.max(anomaly_map_nb)            
+                anomaly_img_score_nb = np.max(anomaly_map_nb)          
+            '''  
 
             anomaly_map_topk1 = anomaly_pxl_topk1.reshape(ref_num_patches)
             if self.args.cut_edge_embedding :

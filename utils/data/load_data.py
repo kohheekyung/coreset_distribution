@@ -289,9 +289,12 @@ class Coor_Distribution_Dataset_Generator():
     def generate(self, dataloader):
         self.embedding_dir_path = os.path.join('./', f'embeddings_{"+".join(self.args.layer_index)}', self.args.category)
         
-        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
+        # self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
+        # if self.args.position_encoding_in_distribution :
+        #     self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
+        self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.subsampling_percentage*100)}.faiss'))
         if self.args.position_encoding_in_distribution :
-            self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
+            self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.subsampling_percentage*100)}_pe.faiss'))
             
         if torch.cuda.is_available():
             res = faiss.StandardGpuResources()
@@ -330,7 +333,7 @@ class Coor_Distribution_Dataset_Generator():
             
     def get_data_size(self):
         input_size = (self.embedding_indices_list[0].shape[0], self.embedding_indices_list[0].shape[1])
-        output_size = self.args.dist_coreset_size
+        output_size = self.dist_coreset_index.ntotal
         return input_size, output_size
 
     def __len__(self):
