@@ -22,9 +22,13 @@ from utils.learning.model import Distribution_Model
 from utils.common.image_processing import PatchMaker, ForwardHook, LastLayerToExtractReachedException
 from utils.common.backbones import Backbone
 
-def min_max_norm(image):
+def min_max_norm(image, thres):
     a_min, a_max = image.min(), image.max()
-    return (image - a_min)/(a_max - a_min) 
+    if thres == -1 :
+        return (image - a_min)/(a_max - a_min)
+    else :
+        restricted = np.maximum((image - thres)/(a_max - thres), 0)
+        return np.power(restricted, 0.5)
 
 def cvt2heatmap(gray):
     heatmap = cv2.applyColorMap(np.uint8(gray), cv2.COLORMAP_JET)
@@ -411,19 +415,19 @@ class AC_Model(pl.LightningModule):
                 pass
         return self.outputs
 
-    def save_anomaly_map(self, anomaly_map, anomaly_map_topk1, anomaly_map_patchcore, anomaly_map_pe, input_img, gt_img, file_name, x_type):
+    def save_anomaly_map(self, anomaly_map, anomaly_map_topk1, anomaly_map_patchcore, anomaly_map_pe, input_img, gt_img, file_name, x_type, thres = -1):
         if anomaly_map.shape != input_img.shape:
             anomaly_map = cv2.resize(anomaly_map, (input_img.shape[0], input_img.shape[1]))
         if anomaly_map_topk1.shape != input_img.shape:
             anomaly_map_topk1 = cv2.resize(anomaly_map_topk1, (input_img.shape[0], input_img.shape[1]))
-        anomaly_map_norm = min_max_norm(anomaly_map)
+        anomaly_map_norm = min_max_norm(anomaly_map, thres)
         anomaly_map_norm_hm = cvt2heatmap(anomaly_map_norm*255)
-        anomaly_map_topk1_norm = min_max_norm(anomaly_map_topk1)
+        anomaly_map_topk1_norm = min_max_norm(anomaly_map_topk1, thres)
         anomaly_map_topk1_norm_hm = cvt2heatmap(anomaly_map_topk1_norm*255)
 
-        anomaly_map_norm_patchcore = min_max_norm(anomaly_map_patchcore)
+        anomaly_map_norm_patchcore = min_max_norm(anomaly_map_patchcore, thres)
         anomaly_map_norm_hm_patchcore = cvt2heatmap(anomaly_map_norm_patchcore*255)
-        anomaly_map_norm_pe = min_max_norm(anomaly_map_pe)
+        anomaly_map_norm_pe = min_max_norm(anomaly_map_pe, thres)
         anomaly_map_norm_hm_pe = cvt2heatmap(anomaly_map_norm_pe*255)
 
         # anomaly map on image
@@ -685,7 +689,8 @@ class AC_Model(pl.LightningModule):
             # save images
             x = self.inv_normalize(x).clip(0,1)
             input_x = cv2.cvtColor(x.permute(0,2,3,1).cpu().numpy()[0]*255, cv2.COLOR_BGR2RGB)
-            self.save_anomaly_map(anomaly_map_resized_blur, anomaly_map_topk1_resized_blur, anomaly_map_patchcore_resized_blur, anomaly_map_pe_resized_blur, input_x, gt_np*255, file_name[0], x_type[0])
+            thres = 0.95
+            self.save_anomaly_map(anomaly_map_resized_blur, anomaly_map_topk1_resized_blur, anomaly_map_patchcore_resized_blur, anomaly_map_pe_resized_blur, input_x, gt_np*255, file_name[0], x_type[0], thres)
 
     def test_epoch_end(self, outputs):
         # Total pixel-level auc-roc score
