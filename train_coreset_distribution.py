@@ -15,7 +15,7 @@ def get_args():
     parser.add_argument('--save_anomaly_map', default=True)
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--seed', type=int, default=22)
-    parser.add_argument('--num_workers', default=0) # 0
+    parser.add_argument('--num_workers', default=4) # 0
     
     # patch_core
     parser.add_argument('--backbone', '-b', choices=['WR101', 'WR50', 'R50', 'R34', 'R18', 'R101', 'R152'], default='WR50') # pretrained model with ImageNet
