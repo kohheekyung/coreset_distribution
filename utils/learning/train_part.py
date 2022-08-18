@@ -385,22 +385,24 @@ class AC_Model(pl.LightningModule):
         if not args.not_use_coreset_distribution:
             self.dist_model = Distribution_Model(args, dist_input_size, dist_output_size)        
             self.dist_model.load_state_dict(torch.load(os.path.join(self.embedding_dir_path, f'best_model_{self.args.dist_padding}_{self.args.dist_coreset_size}.pt'))['model'])
-        if args.use_coordinate_distribution :
+        if not args.not_use_coordinate_distribution :
             self.coor_dist_model = np.load(os.path.join(self.embedding_dir_path, f'coor_model_{int(self.args.subsampling_percentage*100)}.npy'))
         
         self.position_encoding_in_dsitribution = args.position_encoding_in_distribution
 
     def init_results_list(self):
         self.gt_list_px_lvl = []
-        self.pred_list_px_lvl = []
-        self.pred_list_px_lvl_topk1 = []
+        self.pred_list_px_lvl_nb = []
+        self.pred_list_px_lvl_coor = []
         self.pred_list_px_lvl_patchcore = []
         self.pred_list_px_lvl_pe = []
+        self.pred_list_px_lvl_nb_coor = []
         self.gt_list_img_lvl = []
-        self.pred_list_img_lvl = []
-        self.pred_list_img_lvl_topk1 = []
+        self.pred_list_img_lvl_nb = []
+        self.pred_list_img_lvl_coor = []
         self.pred_list_img_lvl_patchcore = []
         self.pred_list_img_lvl_pe = []
+        self.pred_list_img_lvl_nb_coor = []
         self.img_path_list = []
         self.img_type_list = []
 
@@ -414,36 +416,21 @@ class AC_Model(pl.LightningModule):
             except LastLayerToExtractReachedException:
                 pass
         return self.outputs
-
-    def save_anomaly_map(self, anomaly_map, anomaly_map_topk1, anomaly_map_patchcore, anomaly_map_pe, input_img, gt_img, file_name, x_type, thres = -1):
+        
+    def save_anomaly_map(self, anomaly_map, input_img, gt_img, file_name, x_type, save_name, thres = -1):
         if anomaly_map.shape != input_img.shape:
             anomaly_map = cv2.resize(anomaly_map, (input_img.shape[0], input_img.shape[1]))
-        if anomaly_map_topk1.shape != input_img.shape:
-            anomaly_map_topk1 = cv2.resize(anomaly_map_topk1, (input_img.shape[0], input_img.shape[1]))
         anomaly_map_norm = min_max_norm(anomaly_map, thres)
         anomaly_map_norm_hm = cvt2heatmap(anomaly_map_norm*255)
-        anomaly_map_topk1_norm = min_max_norm(anomaly_map_topk1, thres)
-        anomaly_map_topk1_norm_hm = cvt2heatmap(anomaly_map_topk1_norm*255)
-
-        anomaly_map_norm_patchcore = min_max_norm(anomaly_map_patchcore, thres)
-        anomaly_map_norm_hm_patchcore = cvt2heatmap(anomaly_map_norm_patchcore*255)
-        anomaly_map_norm_pe = min_max_norm(anomaly_map_pe, thres)
-        anomaly_map_norm_hm_pe = cvt2heatmap(anomaly_map_norm_pe*255)
 
         # anomaly map on image
         heatmap = cvt2heatmap(anomaly_map_norm*255)
         hm_on_img = heatmap_on_image(heatmap, input_img)
-        heatmap_topk1 = cvt2heatmap(anomaly_map_topk1_norm*255)
-        hm_topk1_on_img = heatmap_on_image(heatmap_topk1, input_img)
 
         # save images
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}.jpg'), input_img)
-        cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap.jpg'), anomaly_map_norm_hm)
-        cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_topk1.jpg'), anomaly_map_topk1_norm_hm)
-        cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_patchcore.jpg'), anomaly_map_norm_hm_patchcore)
-        cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_pe.jpg'), anomaly_map_norm_hm_pe)
-        cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_on_img.jpg'), hm_on_img)
-        cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_amap_topk1_on_img.jpg'), hm_topk1_on_img)
+        cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_{save_name}.jpg'), anomaly_map_norm_hm)
+        cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_{save_name}_on_img.jpg'), hm_on_img)
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_gt.jpg'), gt_img)
 
     def configure_optimizers(self):
@@ -456,7 +443,7 @@ class AC_Model(pl.LightningModule):
         
         self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
         if self.args.position_encoding_in_distribution :
-            self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))  
+            self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
         self.embedding_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.subsampling_percentage*100)}.faiss'))
         self.embedding_coreset_pe_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.subsampling_percentage*100)}_pe.faiss'))
         
@@ -472,16 +459,18 @@ class AC_Model(pl.LightningModule):
         self.embedding_dir_path, self.sample_path, self.source_code_save_path = prep_dirs(self.logger.log_dir, self.args)
         self.pe_pad = None
         self.position_encoding = None
+        
+        if not self.args.position_encoding_in_distribution :
+            embedding_coreset_recon = self.embedding_coreset_index.reconstruct_n(0, self.embedding_coreset_index.ntotal)
+            _, self.emb_to_dist = self.dist_coreset_index.search(embedding_coreset_recon, k=1)
+        else : 
+            embedding_coreset_pe_recon = self.embedding_coreset_pe_index.reconstruct_n(0, self.embedding_coreset_pe_index.ntotal)
+            _, self.emb_to_dist = self.dist_coreset_index.search(embedding_coreset_pe_recon, k=1)
 
     def test_step(self, batch, batch_idx): # Nearest Neighbour Search
-        x, gt, label, file_name, x_type = batch
-        
-        batchsize = x.shape[0]
-        
-        features = self(x)
-        
+        x, gt, label, file_name, x_type = batch        
+        features = self(x)        
         features, ref_num_patches = generate_embedding_features(self.args, features, self.patch_maker)
-            
         embedding_test = features.detach().cpu().numpy() # (W x H) x E
 
         W, H = ref_num_patches
@@ -571,35 +560,26 @@ class AC_Model(pl.LightningModule):
             anomaly_map_pe = embedding_pe_score[:, 0].reshape(ref_num_patches)
 
         ## using neighbor distribution
-        anomaly_img_score_nb = anomaly_img_score_topk1 = anomaly_img_score_patchcore
-        anomaly_map_nb = anomaly_map_topk1 = anomaly_map_patchcore
+        anomaly_img_score_nb = anomaly_img_score_coor = anomaly_img_score_nb_coor = anomaly_img_score_patchcore
+        anomaly_map_nb = anomaly_map_coor = anomaly_map_nb_coor = anomaly_map_patchcore
         if not self.args.not_use_coreset_distribution:
             neighbors = neighbors.reshape(-1, neighbors.shape[2]).astype(np.float32) # (W x H) x NE
-            '''
             y_hat = self.dist_model(torch.tensor(neighbors).cuda()).cpu() # (W x H) x self.dist_coreset_index.ntotal
-            '''
-            
-            if self.args.use_coordinate_distribution :
-                softmax_coor = self.coor_dist_model
-            
-            '''
-            softmax_temp = F.softmax(y_hat / self.args.softmax_temperature_alpha, dim = -1).cpu().numpy() # (W x H) x self.dist_coreset_indesx.ntotal
-
-            softmax_thres = softmax_temp  > self.args.softmax_thres_gamma / 2048 # threshold of softmax
-            '''
-            #softmax_thres = (softmax_temp  > self.args.softmax_thres_gamma / 2048) * (softmax_coor > self.args.softmax_coor_gamma / 2048)
+            softmax_nb_temp = F.softmax(y_hat / self.args.softmax_temperature_alpha, dim = -1).cpu().numpy() # (W x H) x self.dist_coreset_indesx.ntotal
+            softmax_nb_thres = softmax_nb_temp  > self.args.softmax_nb_gamma / self.embedding_coreset_index.ntotal # threshold of softmax
+            #softmax_thres = (softmax_temp  > self.args.softmax_nb_gamma / 2048) * (softmax_coor > self.args.softmax_coor_gamma / 2048)
             #softmax_thres = 1 - (softmax_temp  <= self.args.softmax_gamma / 2048) * (softmax_coor <= 1 / 2048)
-            if self.args.use_coordinate_distribution :
+            
+            if not self.args.not_use_coordinate_distribution :
+                softmax_coor = self.coor_dist_model
                 softmax_coor_thres = softmax_coor > self.args.softmax_coor_gamma / self.embedding_coreset_index.ntotal # threshold of softmax
-            else : 
-                #softmax_coor_thres = softmax_thres
-                softmax_coor_thres = None
+            else :
+                softmax_coor_thres = softmax_nb_thres
             
             embed_distances, embed_indices = self.embedding_coreset_index_cpu.search(embedding_test, k=self.embedding_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
             embed_distances = np.sqrt(embed_distances)
             embed_prob = calc_prob_embedding(embed_distances, gamma=self.args.prob_gamma)
             
-            '''
             if self.args.position_encoding_in_distribution :
                 dist_distances, dist_indices = self.dist_coreset_index.search(embedding_pe_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
             else :
@@ -608,38 +588,36 @@ class AC_Model(pl.LightningModule):
             dist_distances = np.sqrt(dist_distances)
             dist_prob = calc_prob_embedding(dist_distances, gamma=self.args.prob_gamma)
 
-            
-            #softmax_temp_inverse = np.zeros_like(softmax_temp)
-            softmax_thres_inverse = np.zeros_like(softmax_thres)
-            for i in range(neighbors.shape[0]) :
-                for k in range(self.dist_coreset_index.ntotal) :
-                    #softmax_temp_inverse[i, k] = softmax_temp[i, dist_indices[i, k]]
-                    softmax_thres_inverse[i, k] = softmax_thres[i, dist_indices[i, k]]
-            '''
-                    
-            softmax_coor_thres_inverse = np.zeros_like(softmax_coor_thres)
+            # #softmax_nb_temp_inverse = np.zeros_like(softmax_nb_temp)
+            # softmax_nb_thres_inverse = np.zeros_like(softmax_nb_thres)
+            # for i in range(neighbors.shape[0]) :
+            #     for k in range(self.dist_coreset_index.ntotal) :
+            #         #softmax_nb_temp_inverse[i, k] = softmax_nb_temp[i, dist_indices[i, k]]
+            #         softmax_nb_thres_inverse[i, k] = softmax_nb_thres[i, dist_indices[i, k]]
+            # softmax_nb_thres_inverse[:, -1] = True
+            softmax_nb_thres_inverse = np.zeros(shape = (neighbors.shape[0], self.embedding_coreset_index.ntotal))
             for i in range(neighbors.shape[0]) :
                 for k in range(self.embedding_coreset_index.ntotal) :
-                    softmax_coor_thres_inverse[i, k] = softmax_coor_thres[i, embed_indices[i, k]]
-                    
-            '''
-            softmax_thres_inverse[:, -1] = True
-            '''
+                    softmax_nb_thres_inverse[i, k] = softmax_nb_thres[i, dist_indices[i, self.emb_to_dist[k, 0]]]
+            softmax_nb_thres_inverse[:, -1] = True
+
+            softmax_coor_thres_inverse = np.zeros(shape = (neighbors.shape[0], self.embedding_coreset_index.ntotal))
+            for i in range(neighbors.shape[0]) :
+                for k in range(self.embedding_coreset_index.ntotal) :
+                    softmax_coor_thres_inverse[i, k] = softmax_coor_thres[i, embed_indices[i, k]]        
             softmax_coor_thres_inverse[:, -1] = True
-                    
-            #anomaly_pxl_likelihood = np.sum(dist_distances * softmax_temp_inverse, axis = 1)
-            #anomaly_pxl_likelihood = np.apply_along_axis(lambda a : np.min(a[a!=0]), 1, dist_distances * softmax_thres_inverse)
             
-            '''
-            anomaly_pxl_likelihood = np.max(dist_prob * softmax_thres_inverse, axis = 1)
-            anomaly_pxl_likelihood = -np.log(anomaly_pxl_likelihood)
-            '''
-            anomaly_pxl_topk1 = np.max(embed_prob * softmax_coor_thres_inverse, axis = 1)
-            anomaly_pxl_topk1 = -np.log(anomaly_pxl_topk1)
-            #anomaly_pxl_topk1 = np.apply_along_axis(lambda a : np.min(a[a!=0]), 1, dist_distances * softmax_coor_thres_inverse)
-            #anomaly_pxl_likelihood = anomaly_pxl_topk1
-            '''
-            anomaly_map_nb = anomaly_pxl_likelihood.reshape(ref_num_patches)
+            # anomaly_pxl_nb = np.max(dist_prob * softmax_nb_thres_inverse, axis = 1)
+            anomaly_pxl_nb = np.max(embed_prob * softmax_nb_thres_inverse, axis = 1)
+            anomaly_pxl_nb = -np.log(anomaly_pxl_nb)
+            
+            anomaly_pxl_coor = np.max(embed_prob * softmax_coor_thres_inverse, axis = 1)
+            anomaly_pxl_coor = -np.log(anomaly_pxl_coor)
+            
+            anomaly_pxl_nb_coor = np.max(embed_prob * softmax_nb_thres_inverse * softmax_coor_thres_inverse, axis = 1)
+            anomaly_pxl_nb_coor = -np.log(anomaly_pxl_nb_coor)
+
+            anomaly_map_nb = anomaly_pxl_nb.reshape(ref_num_patches)
             if self.args.cut_edge_embedding :
                 patch_padding = (self.args.patchsize - 1) // 2
                 pad_width = ((patch_padding,),(patch_padding,))
@@ -648,80 +626,104 @@ class AC_Model(pl.LightningModule):
                 anomaly_img_score_nb = np.max(anomaly_map_nb)
                 anomaly_map_nb = np.pad(anomaly_map_nb, pad_width, 'edge')
             else : 
-                anomaly_img_score_nb = np.max(anomaly_map_nb)          
-            '''  
+                anomaly_img_score_nb = np.max(anomaly_map_nb)           
 
-            anomaly_map_topk1 = anomaly_pxl_topk1.reshape(ref_num_patches)
+            anomaly_map_coor = anomaly_pxl_coor.reshape(ref_num_patches)
             if self.args.cut_edge_embedding :
                 patch_padding = (self.args.patchsize - 1) // 2
                 pad_width = ((patch_padding,),(patch_padding,))
                 
-                anomaly_map_topk1 = anomaly_map_topk1[patch_padding:anomaly_map_topk1.shape[0]-patch_padding, patch_padding:anomaly_map_topk1.shape[1]-patch_padding]
-                anomaly_img_score_topk1 = np.max(anomaly_map_topk1)
-                anomaly_map_topk1 = np.pad(anomaly_map_topk1, pad_width, 'edge')
+                anomaly_map_coor = anomaly_map_coor[patch_padding:anomaly_map_coor.shape[0]-patch_padding, patch_padding:anomaly_map_coor.shape[1]-patch_padding]
+                anomaly_img_score_coor = np.max(anomaly_map_coor)
+                anomaly_map_coor = np.pad(anomaly_map_coor, pad_width, 'edge')
             else : 
-                anomaly_img_score_topk1 = np.max(anomaly_map_topk1)
+                anomaly_img_score_coor = np.max(anomaly_map_coor)
                 
-        anomaly_map_resized = cv2.resize(anomaly_map_nb, (self.args.imagesize, self.args.imagesize))
-        anomaly_map_resized_blur = gaussian_filter(anomaly_map_resized, sigma=4)
-        anomaly_map_topk1_resized = cv2.resize(anomaly_map_topk1, (self.args.imagesize, self.args.imagesize))
-        anomaly_map_topk1_resized_blur = gaussian_filter(anomaly_map_topk1_resized, sigma=4)
+            anomaly_map_nb_coor = anomaly_pxl_nb_coor.reshape(ref_num_patches)
+            if self.args.cut_edge_embedding :
+                patch_padding = (self.args.patchsize - 1) // 2
+                pad_width = ((patch_padding,),(patch_padding,))
+                
+                anomaly_map_nb_coor = anomaly_map_nb_coor[patch_padding:anomaly_map_nb_coor.shape[0]-patch_padding, patch_padding:anomaly_map_nb_coor.shape[1]-patch_padding]
+                anomaly_img_score_nb_coor = np.max(anomaly_map_nb_coor)
+                anomaly_map_nb_coor = np.pad(anomaly_map_nb_coor, pad_width, 'edge')
+            else : 
+                anomaly_img_score_nb_coor = np.max(anomaly_map_nb_coor)
+                
+        anomaly_map_nb_resized = cv2.resize(anomaly_map_nb, (self.args.imagesize, self.args.imagesize))
+        anomaly_map_nb_resized_blur = gaussian_filter(anomaly_map_nb_resized, sigma=4)
+        anomaly_map_coor_resized = cv2.resize(anomaly_map_coor, (self.args.imagesize, self.args.imagesize))
+        anomaly_map_coor_resized_blur = gaussian_filter(anomaly_map_coor_resized, sigma=4)
         anomaly_map_patchcore_resized = cv2.resize(anomaly_map_patchcore, (self.args.imagesize, self.args.imagesize))
         anomaly_map_patchcore_resized_blur = gaussian_filter(anomaly_map_patchcore_resized, sigma=4)
         anomaly_map_pe_resized = cv2.resize(anomaly_map_pe, (self.args.imagesize, self.args.imagesize))
         anomaly_map_pe_resized_blur = gaussian_filter(anomaly_map_pe_resized, sigma=4)
+        anomaly_map_nb_coor_resized = cv2.resize(anomaly_map_nb_coor, (self.args.imagesize, self.args.imagesize))
+        anomaly_map_nb_coor_resized_blur = gaussian_filter(anomaly_map_nb_coor_resized, sigma=4)
         
         gt_np = gt.cpu().numpy()[0,0].astype(int)
         self.gt_list_px_lvl.extend(gt_np.ravel())
-        self.pred_list_px_lvl.extend(anomaly_map_resized_blur.ravel())
-        self.pred_list_px_lvl_topk1.extend(anomaly_map_topk1_resized_blur.ravel())
+        self.pred_list_px_lvl_nb.extend(anomaly_map_nb_resized_blur.ravel())
+        self.pred_list_px_lvl_coor.extend(anomaly_map_coor_resized_blur.ravel())
         self.pred_list_px_lvl_patchcore.extend(anomaly_map_patchcore_resized_blur.ravel())
-        self.gt_list_img_lvl.append(label.cpu().numpy()[0])
-        self.pred_list_img_lvl.append(anomaly_img_score_nb)
-        self.pred_list_img_lvl_topk1.append(anomaly_img_score_topk1)
-        self.pred_list_img_lvl_patchcore.append(anomaly_img_score_patchcore)
-        self.img_path_list.extend(file_name)
-        self.img_type_list.append(x_type[0])
         self.pred_list_px_lvl_pe.extend(anomaly_map_pe_resized_blur.ravel())
+        self.pred_list_px_lvl_nb_coor.extend(anomaly_map_nb_coor_resized_blur.ravel())
+        self.gt_list_img_lvl.append(label.cpu().numpy()[0])
+        self.pred_list_img_lvl_nb.append(anomaly_img_score_nb)
+        self.pred_list_img_lvl_coor.append(anomaly_img_score_coor)
+        self.pred_list_img_lvl_patchcore.append(anomaly_img_score_patchcore)
         self.pred_list_img_lvl_pe.append(anomaly_img_score_pe)
+        self.pred_list_img_lvl_nb_coor.append(anomaly_img_score_nb_coor)
+        
+        self.img_path_list.extend(file_name)
+        self.img_type_list.append(x_type[0]) 
         
         if self.args.save_anomaly_map :
             # save images
             x = self.inv_normalize(x).clip(0,1)
             input_x = cv2.cvtColor(x.permute(0,2,3,1).cpu().numpy()[0]*255, cv2.COLOR_BGR2RGB)
-            thres = 0.95
-            self.save_anomaly_map(anomaly_map_resized_blur, anomaly_map_topk1_resized_blur, anomaly_map_patchcore_resized_blur, anomaly_map_pe_resized_blur, input_x, gt_np*255, file_name[0], x_type[0], thres)
-
+            thres = -1
+            self.save_anomaly_map(anomaly_map_nb_resized_blur, input_x, gt_np*255, file_name[0], x_type[0], "amap_nb", thres)
+            self.save_anomaly_map(anomaly_map_coor_resized_blur, input_x, gt_np*255, file_name[0], x_type[0], "amap_coor", thres)
+            self.save_anomaly_map(anomaly_map_patchcore_resized_blur, input_x, gt_np*255, file_name[0], x_type[0], "amap_patchcore", thres)
+            self.save_anomaly_map(anomaly_map_pe_resized_blur, input_x, gt_np*255, file_name[0], x_type[0], "amap_pe", thres)
+            self.save_anomaly_map(anomaly_map_nb_coor_resized_blur, input_x, gt_np*255, file_name[0], x_type[0], "amap_nb_coor", thres)
+            
     def test_epoch_end(self, outputs):
         # Total pixel-level auc-roc score
-        pixel_auc = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl)
+        pixel_auc_nb = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl_nb)
         # Total pixel-level auc-roc score for only using likelihood
-        pixel_auc_topk1 = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl_topk1)
+        pixel_auc_coor = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl_coor)
         # Total pixel-level auc-roc score for patchcore version
         pixel_auc_patchcore = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl_patchcore)
         # Total pixel-level auc-roc score for using position encoding
         pixel_auc_pe = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl_pe)
+        # Total pixel-level auc-roc score
+        pixel_auc_nb_coor = roc_auc_score(self.gt_list_px_lvl, self.pred_list_px_lvl_nb_coor)
 
         # Total image-level auc-roc score
-        img_auc = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl)
+        img_auc_nb = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl_nb)
         # Total image-level auc-roc score for only using likelihood
-        img_auc_topk1 = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl_topk1)
+        img_auc_coor = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl_coor)
         # Total image-level auc-roc score for patchcore version
         img_auc_patchcore = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl_patchcore)
         # Total image-level auc-roc score for using position encoding
         img_auc_pe = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl_pe)
+        # Total image-level auc-roc score
+        img_auc_nb_coor = roc_auc_score(self.gt_list_img_lvl, self.pred_list_img_lvl_nb_coor)
 
-        values = {'pixel_auc': pixel_auc, 'pixel_auc_topk1': pixel_auc_topk1, 'pixel_auc_patchcore': pixel_auc_patchcore, \
-                'img_auc': img_auc, 'img_auc_topk1': img_auc_topk1, 'img_auc_patchcore': img_auc_patchcore, \
-                'pixel_auc_pe' : pixel_auc_pe, 'img_auc_pe' : img_auc_pe}
+        values = {'pixel_auc_nb': pixel_auc_nb, 'pixel_auc_coor': pixel_auc_coor, 'pixel_auc_patchcore': pixel_auc_patchcore, \
+                'pixel_auc_pe' : pixel_auc_pe, 'pixel_auc_nb_coor': pixel_auc_nb_coor,\
+                'img_auc_nb': img_auc_nb, 'img_auc_coor': img_auc_coor, 'img_auc_patchcore': img_auc_patchcore, \
+                'img_auc_pe' : img_auc_pe, 'img_auc_nb_coor': img_auc_nb_coor}
         
         self.log_dict(values)
         
         f = open(os.path.join(self.args.project_root_path, "score_result.csv"), "a")
         data = [self.args.category, str(self.args.subsampling_percentage), str(self.args.dist_coreset_size), str(self.args.dist_padding), \
-                str(self.args.softmax_temperature_alpha), str(self.args.softmax_thres_gamma), str(self.args.softmax_coor_gamma),\
-                str(f'{pixel_auc : .3f}'), str(f'{pixel_auc_topk1 : .3f}'), str(f'{pixel_auc_patchcore : .3f}'), str(f'{pixel_auc_pe : .3f}'), \
-                str(f'{img_auc : .3f}'), str(f'{img_auc_topk1 : .3f}'), str(f'{img_auc_patchcore : .3f}'), str(f'{img_auc_pe : .3f}')]
+                str(self.args.softmax_temperature_alpha), str(self.args.softmax_nb_gamma), str(self.args.softmax_coor_gamma),\
+                str(f'{pixel_auc_nb : .3f}'), str(f'{pixel_auc_coor : .3f}'), str(f'{pixel_auc_patchcore : .3f}'), str(f'{pixel_auc_pe : .3f}'), str(f'{pixel_auc_nb_coor : .3f}'), \
+                str(f'{img_auc_nb : .3f}'), str(f'{img_auc_coor : .3f}'), str(f'{img_auc_patchcore : .3f}'), str(f'{img_auc_pe : .3f}'), str(f'{img_auc_nb : .3f}')]
         data = ','.join(data) + '\n'
         f.write(data)
         f.close()

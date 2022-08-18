@@ -85,7 +85,7 @@ def Test_Dataloader(args):
     gt_transforms = GT_Transform(args.resize, args.imagesize)
 
     test_datasets = MVTecDataset(root=os.path.join(args.dataset_path,args.category), transform=data_transforms, gt_transform=gt_transforms, phase='test')
-    test_loader = DataLoader(test_datasets, batch_size=1, shuffle=False, num_workers=args.num_workers) #, pin_memory=True) # only work on batch_size=1, now.
+    test_loader = DataLoader(test_datasets, batch_size=1, shuffle=False, num_workers=args.num_workers) #, pin_memory=True)
     return test_loader
 
 class Distribution_Dataset_Generator():
