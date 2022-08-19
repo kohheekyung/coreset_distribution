@@ -16,7 +16,7 @@ def get_args():
     parser.add_argument('--dataset_path', default='../dataset/MVTecAD') # ./MVTec
     parser.add_argument('--category', default='hazelnut')
     parser.add_argument('--project_root_path', default=r'./result')
-    parser.add_argument('--save_anomaly_map', default=True_)
+    parser.add_argument('--save_anomaly_map', default=True)
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--seed', type=int, default=22)
     parser.add_argument('--num_workers', default=4) # 0
@@ -38,10 +38,10 @@ def get_args():
     
     # coreset_distribution
     parser.add_argument('--dist_coreset_size', type=int, default=2048)
-    parser.add_argument('--dist_padding', type=int, default=3)
-    parser.add_argument('--num_epochs', type=int, default=5) # 7
+    parser.add_argument('--dist_padding', type=int, default=4)
+    parser.add_argument('--num_epochs', type=int, default=7) # 7
     parser.add_argument('--learning_rate', type=float, default=1e-3)
-    parser.add_argument('--step_size', type=int, default=4)
+    parser.add_argument('--step_size', type=int, default=5)
     parser.add_argument('--dist_batchsize', type=int, default=2048)
     parser.add_argument('--softmax_temperature_alpha', type=float, default=1.0)
     parser.add_argument('--prob_gamma', type=float, default=0.99)
@@ -49,11 +49,10 @@ def get_args():
     parser.add_argument('--softmax_coor_gamma', type=float, default=1.0)
     
     # ETC
-    parser.add_argument('--position_encoding_in_distribution', default=False, action='store_true', help="Whether to use position encoding")
+    parser.add_argument('--position_encoding_in_distribution', default=False, action='store_true', help="Whether to use position encoding in training distribution")
     parser.add_argument('--pe_weight', type=float, default=5)
     parser.add_argument('--not_use_coreset_distribution', default=False, action='store_true', help='Whether not to use coreset_distribution')
     parser.add_argument('--not_use_coordinate_distribution', default=False, action='store_true', help='Whether not to use coordinate_distribution')
-    parser.add_argument('--softmax_temperature_beta', type=float, default=1.0)
     parser.add_argument('--cut_edge_embedding', default=False, action='store_true', help="Whether to cut edge embedding")
     args = parser.parse_args()
     return args

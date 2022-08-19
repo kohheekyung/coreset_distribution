@@ -730,8 +730,8 @@ class AC_Model(pl.LightningModule):
 
         print("For anomaly_score_nb")
         true_index = np.where(np.array(self.gt_list_img_lvl) == 0)
-        max_true_anomaly_img_score = np.max(np.array(self.pred_list_img_lvl)[true_index])
-        pred_false_index =  np.intersect1d(np.where(np.array(self.pred_list_img_lvl) < max_true_anomaly_img_score), np.where(np.array(self.gt_list_img_lvl) == 1))
+        max_true_anomaly_img_score = np.max(np.array(self.pred_list_img_lvl_nb)[true_index])
+        pred_false_index =  np.intersect1d(np.where(np.array(self.pred_list_img_lvl_nb) < max_true_anomaly_img_score), np.where(np.array(self.gt_list_img_lvl) == 1))
 
         print(f"max_true_anomaly_img_score is {max_true_anomaly_img_score}")
         for idx in range(pred_false_index.shape[0]) :
