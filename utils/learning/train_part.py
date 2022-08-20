@@ -735,7 +735,7 @@ class AC_Model(pl.LightningModule):
 
         print(f"max_true_anomaly_img_score is {max_true_anomaly_img_score}")
         for idx in range(pred_false_index.shape[0]) :
-            print(f"file name : {self.img_type_list[pred_false_index[idx]]}_{self.img_path_list[pred_false_index[idx]]}, anomaly_score : {self.pred_list_img_lvl[pred_false_index[idx]]}")
+            print(f"file name : {self.img_type_list[pred_false_index[idx]]}_{self.img_path_list[pred_false_index[idx]]}, anomaly_score : {self.pred_list_img_lvl_nb[pred_false_index[idx]]}")
 
         print("For anomaly_score_patchcore")
         true_index = np.where(np.array(self.gt_list_img_lvl) == 0)

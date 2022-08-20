@@ -39,6 +39,7 @@ def get_args():
     # coreset_distribution
     parser.add_argument('--dist_coreset_size', type=int, default=2048)
     parser.add_argument('--dist_padding', type=int, default=4)
+    parser.add_argument('--num_layers', type=int, default=5)
     parser.add_argument('--num_epochs', type=int, default=7) # 7
     parser.add_argument('--learning_rate', type=float, default=1e-3)
     parser.add_argument('--step_size', type=int, default=5)
