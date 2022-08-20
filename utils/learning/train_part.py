@@ -396,12 +396,11 @@ class AC_Model(pl.LightningModule):
                 best_model_fname = f'best_model_dp{self.args.dist_padding}_dcs{self.args.dist_coreset_size}_n{self.args.num_layers}_pe{self.args.pe_weight}.pt'
             else :
                 best_model_fname = f'best_model_dp{self.args.dist_padding}_dcs{self.args.dist_coreset_size}_n{self.args.num_layers}.pt'
-            self.dist_model.load_state_dict(torch.load(os.path.join(self.embedding_dir_path, best_model_fname)['model']))
-        if not args.not_use_coordinate_distribution :
-            if self.args.position_encoding_in_distribution :
-                self.coor_dist_model = np.load(os.path.join(self.embedding_dir_path, f'coor_model_sp{int(self.args.subsampling_percentage*100)}_pe{self.args.pe_weight}.npy'))
+            self.dist_model.load_state_dict(torch.load(os.path.join(self.embedding_dir_path, best_model_fname))['model'])
+        if self.args.position_encoding_in_distribution :
+            self.coor_dist_model = np.load(os.path.join(self.embedding_dir_path, f'coor_model_sp{int(self.args.subsampling_percentage*100)}_pe{self.args.pe_weight}.npy'))
         else :
-                self.coor_dist_model = np.load(os.path.join(self.embedding_dir_path, f'coor_model_sp{int(self.args.subsampling_percentage*100)}.npy'))
+            self.coor_dist_model = np.load(os.path.join(self.embedding_dir_path, f'coor_model_sp{int(self.args.subsampling_percentage*100)}.npy'))
         self.position_encoding_in_dsitribution = args.position_encoding_in_distribution
 
     def init_results_list(self):
@@ -480,10 +479,10 @@ class AC_Model(pl.LightningModule):
         
         if not self.args.position_encoding_in_distribution :
             embedding_coreset_recon = self.embedding_coreset_index.reconstruct_n(0, self.embedding_coreset_index.ntotal)
-            _, self.emb_to_dist = self.dist_coreset_pe_index.search(embedding_coreset_recon, k=1)
+            _, self.emb_to_dist = self.dist_coreset_index.search(embedding_coreset_recon, k=1)
         else : 
             embedding_coreset_pe_recon = self.embedding_coreset_pe_index.reconstruct_n(0, self.embedding_coreset_pe_index.ntotal)
-            _, self.emb_to_dist = self.dist_coreset_index.search(embedding_coreset_pe_recon, k=1)
+            _, self.emb_to_dist = self.dist_coreset_pe_index.search(embedding_coreset_pe_recon, k=1)
 
     def test_step(self, batch, batch_idx): # Nearest Neighbour Search
         x, gt, label, file_name, x_type = batch        
