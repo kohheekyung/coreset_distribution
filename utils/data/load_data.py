@@ -289,9 +289,6 @@ class Coor_Distribution_Dataset_Generator():
     def generate(self, dataloader):
         self.embedding_dir_path = os.path.join('./', f'embeddings_{"+".join(self.args.layer_index)}', self.args.category)
         
-        # self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
-        # if self.args.position_encoding_in_distribution :
-        #     self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
         self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.subsampling_percentage*100)}.faiss'))
         if self.args.position_encoding_in_distribution :
             self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.subsampling_percentage*100)}_pe.faiss'))
