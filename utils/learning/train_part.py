@@ -302,12 +302,12 @@ class Distribution(pl.LightningModule):
                 'train_loss': self.train_loss,
                 'val_loss': self.val_loss
             },
-            f=os.path.join(self.embedding_dir_path, f'model_{self.args.dist_padding}_{self.args.dist_coreset_size}.pt')
+            f=os.path.join(self.embedding_dir_path, f'model_dp{self.args.dist_padding}_dcs{self.args.dist_coreset_size}_n{self.args.num_layers}.pt')
         )
         
         if self.best_val_loss > self.val_loss :
             self.best_val_loss = self.val_loss
-            shutil.copyfile(os.path.join(self.embedding_dir_path, f'model_{self.args.dist_padding}_{self.args.dist_coreset_size}.pt'), os.path.join(self.embedding_dir_path, f'best_model_{self.args.dist_padding}_{self.args.dist_coreset_size}.pt'))
+            shutil.copyfile(os.path.join(self.embedding_dir_path, f'model_dp{self.args.dist_padding}_dcs{self.args.dist_coreset_size}_n{self.args.num_layers}.pt'), os.path.join(self.embedding_dir_path, f'best_model_dp{self.args.dist_padding}_dcs{self.args.dist_coreset_size}_n{self.args.num_layers}.pt'))
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.args.learning_rate)
@@ -324,8 +324,7 @@ class Coor_Distribution():
         self.coor_dist_input_size = coor_dist_input_size
         self.coor_dist_output_size = coor_dist_output_size
         self.coor_model = np.zeros(shape = (coor_dist_input_size[0], coor_dist_input_size[1], coor_dist_output_size), dtype=np.float32)
-        #self.coor_model_save_path = os.path.join(self.embedding_dir_path, f'coor_model_{self.args.dist_coreset_size}.npy')
-        self.coor_model_save_path = os.path.join(self.embedding_dir_path, f'coor_model_{int(self.args.subsampling_percentage*100)}.npy')
+        self.coor_model_save_path = os.path.join(self.embedding_dir_path, f'coor_model_sp{int(self.args.subsampling_percentage*100)}.npy')
         self.dist_padding = args.dist_padding
         
     def fit(self, train_dataloader) :
@@ -384,9 +383,9 @@ class AC_Model(pl.LightningModule):
         
         if not args.not_use_coreset_distribution:
             self.dist_model = Distribution_Model(args, dist_input_size, dist_output_size)        
-            self.dist_model.load_state_dict(torch.load(os.path.join(self.embedding_dir_path, f'best_model_{self.args.dist_padding}_{self.args.dist_coreset_size}.pt'))['model'])
+            self.dist_model.load_state_dict(torch.load(os.path.join(self.embedding_dir_path, f'best_model_dp{self.args.dist_padding}_dcs{self.args.dist_coreset_size}_n{self.args.num_layers}.pt'))['model'])
         if not args.not_use_coordinate_distribution :
-            self.coor_dist_model = np.load(os.path.join(self.embedding_dir_path, f'coor_model_{int(self.args.subsampling_percentage*100)}.npy'))
+            self.coor_dist_model = np.load(os.path.join(self.embedding_dir_path, f'coor_model_sp{int(self.args.subsampling_percentage*100)}.npy'))
         
         self.position_encoding_in_dsitribution = args.position_encoding_in_distribution
 
@@ -720,7 +719,7 @@ class AC_Model(pl.LightningModule):
         self.log_dict(values)
         
         f = open(os.path.join(self.args.project_root_path, "score_result.csv"), "a")
-        data = [self.args.category, str(self.args.subsampling_percentage), str(self.args.dist_coreset_size), str(self.args.dist_padding), \
+        data = [self.args.category, str(self.args.subsampling_percentage), str(self.args.dist_coreset_size), str(self.args.dist_padding), str(self.args.num_layers),\
                 str(self.args.softmax_temperature_alpha), str(self.args.softmax_nb_gamma), str(self.args.softmax_coor_gamma),\
                 str(f'{pixel_auc_nb : .3f}'), str(f'{pixel_auc_coor : .3f}'), str(f'{pixel_auc_patchcore : .3f}'), str(f'{pixel_auc_pe : .3f}'), str(f'{pixel_auc_nb_coor : .3f}'), \
                 str(f'{img_auc_nb : .3f}'), str(f'{img_auc_coor : .3f}'), str(f'{img_auc_patchcore : .3f}'), str(f'{img_auc_pe : .3f}'), str(f'{img_auc_nb : .3f}')]
