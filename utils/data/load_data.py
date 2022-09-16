@@ -77,7 +77,7 @@ def Train_Dataloader(args):
     gt_transforms = GT_Transform(args.resize, args.imagesize)
 
     image_datasets = MVTecDataset(root=os.path.join(args.dataset_path,args.category), transform=data_transforms, gt_transform=gt_transforms, phase='train')
-    train_loader = DataLoader(image_datasets, batch_size=4, shuffle=True, num_workers=args.num_workers) #, pin_memory=True)
+    train_loader = DataLoader(image_datasets, batch_size=4, shuffle=True, num_workers=args.num_workers, pin_memory=True)
     return train_loader
 
 def Test_Dataloader(args):
@@ -85,7 +85,7 @@ def Test_Dataloader(args):
     gt_transforms = GT_Transform(args.resize, args.imagesize)
 
     test_datasets = MVTecDataset(root=os.path.join(args.dataset_path,args.category), transform=data_transforms, gt_transform=gt_transforms, phase='test')
-    test_loader = DataLoader(test_datasets, batch_size=1, shuffle=False, num_workers=args.num_workers) #, pin_memory=True)
+    test_loader = DataLoader(test_datasets, batch_size=1, shuffle=False, num_workers=args.num_workers, pin_memory=True)
     return test_loader
 
 class Distribution_Dataset_Generator():
@@ -234,8 +234,8 @@ def Distribution_Train_Dataloader(args, dataloader):
     train_size = len(distribution_dataset_generator) - val_size
     train_dataset, val_dataset = random_split(distribution_dataset_generator, [train_size, val_size])
 
-    distribution_train_dataloader= DataLoader(train_dataset, batch_size=args.dist_batchsize, shuffle=True, num_workers=args.num_workers) #, pin_memory=True)
-    distribution_val_dataloader= DataLoader(val_dataset, batch_size=args.dist_batchsize, shuffle=False, num_workers=args.num_workers) #, pin_memory=True)
+    distribution_train_dataloader= DataLoader(train_dataset, batch_size=args.dist_batchsize, shuffle=True, num_workers=args.num_workers, pin_memory=True)
+    distribution_val_dataloader= DataLoader(val_dataset, batch_size=args.dist_batchsize, shuffle=False, num_workers=args.num_workers, pin_memory=True)
     return distribution_train_dataloader, distribution_val_dataloader, dist_input_size, dist_output_size
 
 class Coor_Distribution_Dataset_Generator():

@@ -1,5 +1,3 @@
-from pickle import FALSE
-from numpy import True_
 import pytorch_lightning as pl
 import argparse
 import os
@@ -19,7 +17,7 @@ def get_args():
     parser.add_argument('--save_anomaly_map', default=True)
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--seed', type=int, default=22)
-    parser.add_argument('--num_workers', default=4) # 0
+    parser.add_argument('--num_workers', default=0) # 0
     
     # patch_core
     parser.add_argument('--backbone', '-b', choices=['WR101', 'WR50', 'R50', 'R34', 'R18', 'R101', 'R152'], default='WR101') # pretrained model with ImageNet
@@ -39,8 +37,8 @@ def get_args():
     # coreset_distribution
     parser.add_argument('--dist_coreset_size', type=int, default=2048)
     parser.add_argument('--dist_padding', type=int, default=4)
-    parser.add_argument('--num_layers', type=int, default=5)
-    parser.add_argument('--num_epochs', type=int, default=7) # 7
+    parser.add_argument('--num_layers', type=int, default=10)
+    parser.add_argument('--num_epochs', type=int, default=15) # 7
     parser.add_argument('--learning_rate', type=float, default=1e-3)
     parser.add_argument('--step_size', type=int, default=5)
     parser.add_argument('--dist_batchsize', type=int, default=2048)
@@ -63,7 +61,7 @@ if __name__ == '__main__':
     pl.seed_everything(args.seed)
     default_root_dir = os.path.join(args.project_root_path, args.category) # ./MVTec/hazelnut
 
-    # generate train dataloader adn test dataloader
+    # generate train dataloader and test dataloader
     train_dataloader, test_dataloader = Train_Dataloader(args), Test_Dataloader(args)
 
     # generate coreset and save it to faiss

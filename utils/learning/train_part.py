@@ -463,10 +463,11 @@ class AC_Model(pl.LightningModule):
         
         if torch.cuda.is_available():
             res = faiss.StandardGpuResources()
-            if self.args.position_encoding_in_distribution :
-                self.dist_coreset_pe_index = faiss.index_cpu_to_gpu(res, 0, self.dist_coreset_pe_index)
-            else :
-                self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0, self.dist_coreset_index)
+            if self.args.dist_coreset_size <= 2048:
+              if self.args.position_encoding_in_distribution :
+                  self.dist_coreset_pe_index = faiss.index_cpu_to_gpu(res, 0, self.dist_coreset_pe_index)
+              else :
+                  self.dist_coreset_index = faiss.index_cpu_to_gpu(res, 0, self.dist_coreset_index)
             self.embedding_coreset_index = faiss.index_cpu_to_gpu(res, 0, self.embedding_coreset_index)
             self.embedding_coreset_pe_index = faiss.index_cpu_to_gpu(res, 0, self.embedding_coreset_pe_index)
             
@@ -483,6 +484,7 @@ class AC_Model(pl.LightningModule):
         else : 
             embedding_coreset_pe_recon = self.embedding_coreset_pe_index.reconstruct_n(0, self.embedding_coreset_pe_index.ntotal)
             _, self.emb_to_dist = self.dist_coreset_pe_index.search(embedding_coreset_pe_recon, k=1)
+        self.emb_to_dist = np.int32(self.emb_to_dist) # TODO: int16?
 
     def test_step(self, batch, batch_idx): # Nearest Neighbour Search
         x, gt, label, file_name, x_type = batch        
@@ -522,7 +524,7 @@ class AC_Model(pl.LightningModule):
                     neighbors[i_idx, j_idx] = neighbor
 
         ## patchcore        
-        embedding_score, embedding_indices = self.embedding_coreset_index.search(embedding_test, k=self.args.anomaly_nn) # (W x H) x self.args.n_neighbors
+        embedding_score, _ = self.embedding_coreset_index.search(embedding_test, k=self.args.anomaly_nn) # (W x H) x self.args.n_neighbors
         embedding_score = np.sqrt(embedding_score)
         if self.args.cut_edge_embedding :
             embedding_score = embedding_score.reshape((ref_num_patches[0], ref_num_patches[1], -1))
@@ -551,7 +553,7 @@ class AC_Model(pl.LightningModule):
         position_encoding_reshape = self.position_encoding.reshape(-1, 2)
         embedding_pe_test = np.concatenate((embedding_test, position_encoding_reshape), axis = 1).astype(np.float32)
 
-        embedding_pe_score, embedding_pe_indices = self.embedding_coreset_pe_index.search(embedding_pe_test, k=self.args.anomaly_nn) # (W x H) x self.args.n_neighbors
+        embedding_pe_score, _ = self.embedding_coreset_pe_index.search(embedding_pe_test, k=self.args.anomaly_nn) # (W x H) x self.args.n_neighbors
         embedding_pe_score = np.sqrt(embedding_pe_score)
         
         if self.args.cut_edge_embedding :
@@ -594,6 +596,7 @@ class AC_Model(pl.LightningModule):
                 softmax_coor_thres = softmax_nb_thres
             
             embed_distances, embed_indices = self.embedding_coreset_index_cpu.search(embedding_test, k=self.embedding_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
+            embed_indices = np.int32(embed_indices)
             embed_distances = np.sqrt(embed_distances)
             embed_prob = calc_prob_embedding(embed_distances, gamma=self.args.prob_gamma)
             
@@ -601,9 +604,10 @@ class AC_Model(pl.LightningModule):
                 dist_distances, dist_indices = self.dist_coreset_pe_index.search(embedding_pe_test, k=self.dist_coreset_pe_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
             else :
                 dist_distances, dist_indices = self.dist_coreset_index.search(embedding_test, k=self.dist_coreset_index.ntotal) # (W x H) x self.dist_coreset_index.ntotal
+            dist_indices = np.int32(dist_indices)
 
             dist_distances = np.sqrt(dist_distances)
-            dist_prob = calc_prob_embedding(dist_distances, gamma=self.args.prob_gamma)
+            # dist_prob = calc_prob_embedding(dist_distances, gamma=self.args.prob_gamma)
 
             # #softmax_nb_temp_inverse = np.zeros_like(softmax_nb_temp)
             # softmax_nb_thres_inverse = np.zeros_like(softmax_nb_thres)
@@ -612,17 +616,29 @@ class AC_Model(pl.LightningModule):
             #         #softmax_nb_temp_inverse[i, k] = softmax_nb_temp[i, dist_indices[i, k]]
             #         softmax_nb_thres_inverse[i, k] = softmax_nb_thres[i, dist_indices[i, k]]
             # softmax_nb_thres_inverse[:, -1] = True
-            softmax_nb_thres_inverse = np.zeros(shape = (neighbors.shape[0], self.embedding_coreset_index.ntotal))
+            """
+            softmax_nb_thres_inverse = np.zeros(shape = (neighbors.shape[0], self.embedding_coreset_index.ntotal), dtype=bool)
             for i in range(neighbors.shape[0]) :
                 for k in range(self.embedding_coreset_index.ntotal) :
                     softmax_nb_thres_inverse[i, k] = softmax_nb_thres[i, dist_indices[i, self.emb_to_dist[k, 0]]]
             softmax_nb_thres_inverse[:, -1] = True
+            """
+            softmax_nb_thres_inverse = np.zeros(shape = (neighbors.shape[0], self.embedding_coreset_index.ntotal))
+            for j in range(softmax_nb_thres.shape[1]):
+                idx = np.where(self.emb_to_dist[:,0]==j)
+                
+                for i in range(softmax_coor_thres.shape[0]):
+                    if softmax_nb_thres[i, dist_indices[i, j]]:
+                        softmax_nb_thres_inverse[i, idx] = True
+            softmax_nb_thres_inverse[:, -1] = True
+            del softmax_nb_thres
 
-            softmax_coor_thres_inverse = np.zeros(shape = (neighbors.shape[0], self.embedding_coreset_index.ntotal))
-            for i in range(neighbors.shape[0]) :
+            softmax_coor_thres_inverse = np.zeros(shape = (neighbors.shape[0], self.embedding_coreset_index.ntotal), dtype=bool)
+            for i in range(softmax_coor_thres.shape[0]) :
                 for k in range(self.embedding_coreset_index.ntotal) :
                     softmax_coor_thres_inverse[i, k] = softmax_coor_thres[i, embed_indices[i, k]]        
             softmax_coor_thres_inverse[:, -1] = True
+            del softmax_coor_thres
             
             # anomaly_pxl_nb = np.max(dist_prob * softmax_nb_thres_inverse, axis = 1)
             anomaly_pxl_nb = np.max(embed_prob * softmax_nb_thres_inverse, axis = 1)
@@ -631,7 +647,7 @@ class AC_Model(pl.LightningModule):
             anomaly_pxl_coor = np.max(embed_prob * softmax_coor_thres_inverse, axis = 1)
             anomaly_pxl_coor = -np.log(anomaly_pxl_coor)
             
-            anomaly_pxl_nb_coor = np.max(embed_prob * softmax_nb_thres_inverse * softmax_coor_thres_inverse, axis = 1)
+            anomaly_pxl_nb_coor = np.max(embed_prob * (softmax_nb_thres_inverse * softmax_coor_thres_inverse), axis = 1)
             anomaly_pxl_nb_coor = -np.log(anomaly_pxl_nb_coor)
 
             anomaly_map_nb = anomaly_pxl_nb.reshape(ref_num_patches)
@@ -740,8 +756,8 @@ class AC_Model(pl.LightningModule):
         data = [self.args.category, str(self.args.subsampling_percentage), str(self.args.dist_coreset_size), str(self.args.dist_padding), str(self.args.num_layers),\
                 str(self.args.position_encoding_in_distribution), str(self.args.pe_weight),\
                 str(self.args.softmax_temperature_alpha), str(self.args.softmax_nb_gamma), str(self.args.softmax_coor_gamma),\
-                str(f'{pixel_auc_nb : .3f}'), str(f'{pixel_auc_coor : .3f}'), str(f'{pixel_auc_patchcore : .3f}'), str(f'{pixel_auc_pe : .3f}'), str(f'{pixel_auc_nb_coor : .3f}'), \
-                str(f'{img_auc_nb : .3f}'), str(f'{img_auc_coor : .3f}'), str(f'{img_auc_patchcore : .3f}'), str(f'{img_auc_pe : .3f}'), str(f'{img_auc_nb : .3f}')]
+                str(f'{pixel_auc_nb : .6f}'), str(f'{pixel_auc_coor : .6f}'), str(f'{pixel_auc_patchcore : .6f}'), str(f'{pixel_auc_pe : .6f}'), str(f'{pixel_auc_nb_coor : .6f}'), \
+                str(f'{img_auc_nb : .6f}'), str(f'{img_auc_coor : .6f}'), str(f'{img_auc_patchcore : .6f}'), str(f'{img_auc_pe : .6f}'), str(f'{img_auc_nb_coor : .6f}')]
         data = ','.join(data) + '\n'
         f.write(data)
         f.close()
