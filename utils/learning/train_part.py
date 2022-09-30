@@ -624,19 +624,22 @@ class AC_Model(pl.LightningModule):
             softmax_nb_thres_inverse[:, -1] = True
             """
             softmax_nb_thres_inverse = np.zeros(shape = (neighbors.shape[0], self.embedding_coreset_index.ntotal))
-            for j in range(softmax_nb_thres.shape[1]):
-                idx = np.where(self.emb_to_dist[:,0]==j)
-                
-                for i in range(softmax_coor_thres.shape[0]):
-                    if softmax_nb_thres[i, dist_indices[i, j]]:
-                        softmax_nb_thres_inverse[i, idx] = True
+            import pymp
+            with pymp.Parallel(4) as p :
+                for j in p.range(softmax_nb_thres.shape[1]):
+                    idx = np.where(self.emb_to_dist[:,0]==j)
+                    
+                    for i in range(softmax_coor_thres.shape[0]):
+                        if softmax_nb_thres[i, dist_indices[i, j]]:
+                            softmax_nb_thres_inverse[i, idx] = True
             softmax_nb_thres_inverse[:, -1] = True
             del softmax_nb_thres
 
             softmax_coor_thres_inverse = np.zeros(shape = (neighbors.shape[0], self.embedding_coreset_index.ntotal), dtype=bool)
-            for i in range(softmax_coor_thres.shape[0]) :
-                for k in range(self.embedding_coreset_index.ntotal) :
-                    softmax_coor_thres_inverse[i, k] = softmax_coor_thres[i, embed_indices[i, k]]        
+            with pymp.Parallel(4) as p :
+                for k in p.range(self.embedding_coreset_index.ntotal) :
+                    for i in range(softmax_coor_thres.shape[0]) :
+                        softmax_coor_thres_inverse[i, k] = softmax_coor_thres[i, embed_indices[i, k]]        
             softmax_coor_thres_inverse[:, -1] = True
             del softmax_coor_thres
             
