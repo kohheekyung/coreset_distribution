@@ -6,12 +6,14 @@ import torch
 from torch.utils.data import DataLoader, random_split
 from torch.nn import functional as F
 
-from utils.data.transforms import Transform, GT_Transform
+from utils.data.transforms import Transform, GT_Transform, cutpaste
 import faiss
 import numpy as np
 from utils.common.embedding import embedding_concat, generate_embedding_features
 from utils.common.image_processing import PatchMaker, ForwardHook, LastLayerToExtractReachedException
 from utils.common.backbones import Backbone
+
+import pickle
 
 class MVTecDataset(Dataset):
     def __init__(self, root, transform, gt_transform, phase):
@@ -77,7 +79,7 @@ def Train_Dataloader(args):
     gt_transforms = GT_Transform(args.resize, args.imagesize)
 
     image_datasets = MVTecDataset(root=os.path.join(args.dataset_path,args.category), transform=data_transforms, gt_transform=gt_transforms, phase='train')
-    train_loader = DataLoader(image_datasets, batch_size=4, shuffle=True, num_workers=args.num_workers, pin_memory=True)
+    train_loader = DataLoader(image_datasets, batch_size=1, shuffle=True, num_workers=args.num_workers, pin_memory=True)
     return train_loader
 
 def Test_Dataloader(args):
@@ -88,6 +90,97 @@ def Test_Dataloader(args):
     test_loader = DataLoader(test_datasets, batch_size=1, shuffle=False, num_workers=args.num_workers, pin_memory=True)
     return test_loader
 
+class Syn_Train_Dataset(Dataset):
+    def __init__(self, dataloader, imagesize, repeat=1, area_ratio = (0.01, 0.1), aspect_ratio = ((0.3, 1) , (1, 3.3)), maxcut = 5):
+        self.imgs = []
+        self.gts = []
+        self.labels = []
+        self.file_names = []
+        self.types = []
+        
+        for iter, data in enumerate(dataloader) :
+            for repeat_idx in range(repeat) :
+                x, gt, label, file_name, x_type = data
+                x = x.squeeze(0) # 3 x H x W, normalized image
+                gt = gt.squeeze(0) # 1 x H x W
+                
+                cutpaste_fn = cutpaste(imagesize, area_ratio, aspect_ratio, maxcut, transform=None, rotation = False)
+                x, gt = cutpaste_fn(x, gt) # 3 x H x W, 1 x H x W
+                
+                file_name = str(iter * repeat + repeat_idx)
+                
+                self.imgs.append(x)
+                self.gts.append(gt)
+                self.labels.append(label)
+                self.file_names.append(file_name)
+                self.types.extend(['syn'])
+                
+    def __len__(self):
+        return len(self.imgs)
+        
+    def __getitem__(self, idx):
+        return self.imgs[idx], self.gts[idx], self.labels[idx], self.file_names[idx], self.types[idx]
+
+def Syn_Train_Dataloader(args, dataloader) :
+    syn_train_dataset = Syn_Train_Dataset(dataloader, args.imagesize, repeat=args.syn_repeat)
+
+    syn_train_loader = DataLoader(syn_train_dataset, batch_size=1, shuffle=False, num_workers=args.num_workers, pin_memory=True)
+    return syn_train_loader
+
+class Refine_Train_Dataset(Dataset):
+    def __init__(self, root_dir):        
+        self.img_paths =  glob.glob(str(root_dir) + "/*img.pkl")
+        self.img_paths.sort()
+        self.gt_paths =  glob.glob(str(root_dir) + "/*gt.pkl")
+        self.gt_paths.sort() 
+        self.pkl_paths =  glob.glob(str(root_dir) + "/*amap.pkl")
+        self.pkl_paths.sort()
+    
+    def __len__(self):
+        return len(self.img_paths)
+        
+    def __getitem__(self, idx):
+        img_path, gt_path, pkl_path = self.img_paths[idx], self.gt_paths[idx], self.pkl_paths[idx]
+        
+        with open(img_path, "rb") as fr :
+            img = pickle.load(fr) # normalized image
+        with open(gt_path, "rb") as fr :
+            gt = pickle.load(fr)
+        with open(pkl_path, "rb") as fr :
+            amap = pickle.load(fr)
+        amap = np.expand_dims(amap, axis=0) # 1 x H x W
+        amap = torch.tensor(amap)
+        
+        assert img.size()[1:] == gt.size()[1:], "image.size != gt.size !!!"
+        assert img.size()[1:] == amap.size()[1:], "image.size != amap.size !!!"
+        
+        return img, gt, amap
+
+def Refine_Train_Dataloader(args):      
+    image_datasets = Refine_Train_Dataset(args.syn_dataset_dir)
+    
+    val_size = int(len(image_datasets) * 0.1)
+    train_size = len(image_datasets) - val_size
+    train_dataset, val_dataset = random_split(image_datasets, [train_size, val_size])
+    
+    train_loader = DataLoader(train_dataset, batch_size=args.refine_batchsize, shuffle=True, num_workers=args.num_workers, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=args.refine_batchsize, shuffle=False, num_workers=args.num_workers, pin_memory=True)
+    return train_loader, val_loader
+
+def get_init_threshold(dataloader):
+    threshold_list = []
+
+    for iter, batch in enumerate(dataloader) :
+        img, gt, amap = batch
+        gt_mask_area = (gt == True).sum()
+        amap = amap.ravel()
+        amap.sort()
+        threshold_list.append(amap[-int(gt_mask_area)])
+    
+    init_threshold = np.mean(threshold_list)
+    
+    return init_threshold
+    
 class Distribution_Dataset_Generator():
     def __init__(self, args):
         super(Distribution_Dataset_Generator, self).__init__()
@@ -187,31 +280,32 @@ class Distribution_Dataset_Generator():
             self.embedding_indices_list.extend([x for x in embedding_indices])
             
     def get_data_size(self):
-        input_size = self.embedding_pad_list[0].shape[2] * (pow(self.dist_padding * 2 + 1, 2) - 1)
+        if self.dist_padding > 4 :
+            input_size = self.embedding_pad_list[0].shape[2] * (pow(self.dist_padding + 1, 2) - 1)
+        else :
+            input_size = self.embedding_pad_list[0].shape[2] * (pow(self.dist_padding * 2 + 1, 2) - 1)
         output_size = self.args.dist_coreset_size
         return input_size, output_size
 
     def __len__(self):
         len_i, len_j = self.embedding_indices_list[0].shape[:2]
-        if self.args.cut_edge_embedding : 
-            len_i = len_i - self.args.patchsize + 1
-            len_j = len_j - self.args.patchsize + 1
+        
+        len_i = len_i - self.args.patchsize + 1
+        len_j = len_j - self.args.patchsize + 1
         
         return len(self.embedding_indices_list) * len_i * len_j
 
     def __getitem__(self, idx):
         len_list, len_i, len_j = len(self.embedding_indices_list), self.embedding_indices_list[0].shape[0], self.embedding_indices_list[0].shape[1]
 
-        if self.args.cut_edge_embedding : 
-            len_i = len_i - self.args.patchsize + 1
-            len_j = len_j - self.args.patchsize + 1
+        len_i = len_i - self.args.patchsize + 1
+        len_j = len_j - self.args.patchsize + 1
 
         idx, j_idx = idx // len_j, idx % len_j
         list_idx, i_idx = idx // len_i, idx % len_i
         
-        if self.args.cut_edge_embedding : 
-            i_idx = i_idx + (self.args.patchsize - 1) // 2
-            j_idx = j_idx + (self.args.patchsize - 1) // 2
+        i_idx = i_idx + (self.args.patchsize - 1) // 2
+        j_idx = j_idx + (self.args.patchsize - 1) // 2
 
         embedding_pad = self.embedding_pad_list[list_idx] # (W+1) x (H+1) x E
         embedding_indices = self.embedding_indices_list[list_idx] # W x H
@@ -219,9 +313,12 @@ class Distribution_Dataset_Generator():
         index = embedding_indices[i_idx, j_idx]
         
         # delete middle features in neighbor
-        neighbor = embedding_pad[i_idx:i_idx + self.dist_padding * 2 + 1, j_idx:j_idx + self.dist_padding * 2 + 1].reshape(-1)        
-        mid_index = (pow(self.dist_padding * 2 + 1, 2) + 1) // 2        
-        neighbor = np.concatenate([neighbor[:self.embedding_pad_list[0].shape[2]*mid_index], neighbor[self.embedding_pad_list[0].shape[2]*(mid_index+1):]])
+        if self.dist_padding > 4 :
+            neighbor = embedding_pad[i_idx:i_idx + self.args.dist_padding * 2 + 1 : 2, j_idx:j_idx + self.args.dist_padding * 2 + 1 : 2].reshape(-1)
+        else :        
+            neighbor = embedding_pad[i_idx:i_idx + self.dist_padding * 2 + 1, j_idx:j_idx + self.dist_padding * 2 + 1].reshape(-1)        
+            mid_index = (pow(self.dist_padding * 2 + 1, 2) + 1) // 2        
+            neighbor = np.concatenate([neighbor[:self.embedding_pad_list[0].shape[2]*mid_index], neighbor[self.embedding_pad_list[0].shape[2]*(mid_index+1):]])
         
         return neighbor.astype(np.float32), index
     
@@ -335,25 +432,14 @@ class Coor_Distribution_Dataset_Generator():
 
     def __len__(self):
         len_i, len_j = self.embedding_indices_list[0].shape[:2]
-        if self.args.cut_edge_embedding : 
-            len_i = len_i - self.args.patchsize + 1
-            len_j = len_j - self.args.patchsize + 1
         
         return len(self.embedding_indices_list) * len_i * len_j
 
     def __getitem__(self, idx):
         len_list, len_i, len_j = len(self.embedding_indices_list), self.embedding_indices_list[0].shape[0], self.embedding_indices_list[0].shape[1]
-        
-        if self.args.cut_edge_embedding : 
-            len_i = len_i - self.args.patchsize + 1
-            len_j = len_j - self.args.patchsize + 1
 
         idx, j_idx = idx // len_j, idx % len_j
         list_idx, i_idx = idx // len_i, idx % len_i
-        
-        if self.args.cut_edge_embedding : 
-            i_idx = i_idx + (self.args.patchsize - 1) // 2
-            j_idx = j_idx + (self.args.patchsize - 1) // 2
 
         embedding_indices = self.embedding_indices_list[list_idx] # W x H
         
