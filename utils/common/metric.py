@@ -1,4 +1,20 @@
 import numpy as np
+from torch import nn
+from torch.nn import functional as F
+
+class DiceLoss(nn.Module):
+    def __init__(self):
+        super(DiceLoss, self).__init__()
+
+    def forward(self, inputs, targets, smooth=1):
+        
+        inputs = inputs.view(-1)
+        targets = targets.view(-1)
+        
+        intersection = (inputs * targets).sum()                            
+        dice = (2.*intersection + smooth) / (inputs.sum() + targets.sum() + smooth)
+        
+        return 1 - dice 
 
 def cal_pro_metric_new(labeled_imgs, score_imgs, fpr_thresh=0.3, max_steps=2000, class_name=None):
     #labeled_imgs = np.array(labeled_imgs).squeeze(1)
