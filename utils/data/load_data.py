@@ -91,7 +91,7 @@ def Test_Dataloader(args):
     return test_loader
 
 class Syn_Train_Dataset(Dataset):
-    def __init__(self, dataloader, imagesize, repeat=1, area_ratio = (0.01, 0.1), aspect_ratio = ((0.3, 1) , (1, 3.3)), maxcut = 5):
+    def __init__(self, dataloader, imagesize, repeat=1, area_ratio = (0.01, 0.05), aspect_ratio = ((0.2, 1) , (1, 5)), maxcut = 5):
         self.imgs = []
         self.gts = []
         self.labels = []
@@ -104,7 +104,7 @@ class Syn_Train_Dataset(Dataset):
                 x = x.squeeze(0) # 3 x H x W, normalized image
                 gt = gt.squeeze(0) # 1 x H x W
                 
-                cutpaste_fn = cutpaste(imagesize, area_ratio, aspect_ratio, maxcut, transform=None, rotation = False)
+                cutpaste_fn = cutpaste(imagesize, area_ratio, aspect_ratio, maxcut, transform=None, rotation = None)
                 x, gt = cutpaste_fn(x, gt) # 3 x H x W, 1 x H x W
                 
                 file_name = str(iter * repeat + repeat_idx)
@@ -141,6 +141,9 @@ class Refine_Train_Dataset(Dataset):
         
     def __getitem__(self, idx):
         img_path, gt_path, pkl_path = self.img_paths[idx], self.gt_paths[idx], self.pkl_paths[idx]
+        img_name = img_path.split('/')[-1].split('.')[0]
+        x_type = img_name.split('_')[0]
+        file_name = img_name.split('_')[1]
         
         with open(img_path, "rb") as fr :
             img = pickle.load(fr) # normalized image
@@ -154,7 +157,7 @@ class Refine_Train_Dataset(Dataset):
         assert img.size()[1:] == gt.size()[1:], "image.size != gt.size !!!"
         assert img.size()[1:] == amap.size()[1:], "image.size != amap.size !!!"
         
-        return img, gt, amap
+        return img, gt, amap, x_type, file_name
 
 def Refine_Train_Dataloader(args):      
     image_datasets = Refine_Train_Dataset(args.syn_dataset_dir)
@@ -167,7 +170,7 @@ def Refine_Train_Dataloader(args):
     val_loader = DataLoader(val_dataset, batch_size=args.refine_batchsize, shuffle=False, num_workers=args.num_workers, pin_memory=True)
     return train_loader, val_loader
 
-def get_init_threshold(dataloader):
+def get_init_threshold(dataloader):  
     threshold_list = []
 
     for iter, batch in enumerate(dataloader) :
@@ -176,10 +179,25 @@ def get_init_threshold(dataloader):
         amap = amap.ravel()
         amap.sort()
         threshold_list.append(amap[-int(gt_mask_area)])
+        break
     
     init_threshold = np.mean(threshold_list)
     
     return init_threshold
+
+def get_max_threshold(args):
+    root_dir = args.syn_train_dataset_dir
+    pkl_paths = glob.glob(str(root_dir) + "/*amap.pkl")
+    pkl_paths.sort()    
+    max_threshold = 0.0
+    
+    for pkl_path in pkl_paths :
+        with open(pkl_path, "rb") as fr :
+            amap = pickle.load(fr)
+        
+        max_threshold = max(max_threshold, np.max(amap))
+        
+    return max_threshold * 0.8
     
 class Distribution_Dataset_Generator():
     def __init__(self, args):
@@ -290,22 +308,25 @@ class Distribution_Dataset_Generator():
     def __len__(self):
         len_i, len_j = self.embedding_indices_list[0].shape[:2]
         
-        len_i = len_i - self.args.patchsize + 1
-        len_j = len_j - self.args.patchsize + 1
+        if self.args.cut_edge_embedding :
+            len_i = len_i - self.args.patchsize + 1
+            len_j = len_j - self.args.patchsize + 1
         
         return len(self.embedding_indices_list) * len_i * len_j
 
     def __getitem__(self, idx):
         len_list, len_i, len_j = len(self.embedding_indices_list), self.embedding_indices_list[0].shape[0], self.embedding_indices_list[0].shape[1]
 
-        len_i = len_i - self.args.patchsize + 1
-        len_j = len_j - self.args.patchsize + 1
+        if self.args.cut_edge_embedding :
+            len_i = len_i - self.args.patchsize + 1
+            len_j = len_j - self.args.patchsize + 1
 
         idx, j_idx = idx // len_j, idx % len_j
         list_idx, i_idx = idx // len_i, idx % len_i
         
-        i_idx = i_idx + (self.args.patchsize - 1) // 2
-        j_idx = j_idx + (self.args.patchsize - 1) // 2
+        if self.args.cut_edge_embedding :
+            i_idx = i_idx + (self.args.patchsize - 1) // 2
+            j_idx = j_idx + (self.args.patchsize - 1) // 2
 
         embedding_pad = self.embedding_pad_list[list_idx] # (W+1) x (H+1) x E
         embedding_indices = self.embedding_indices_list[list_idx] # W x H
@@ -432,14 +453,25 @@ class Coor_Distribution_Dataset_Generator():
 
     def __len__(self):
         len_i, len_j = self.embedding_indices_list[0].shape[:2]
+        if self.args.cut_edge_embedding : 
+            len_i = len_i - self.args.patchsize + 1
+            len_j = len_j - self.args.patchsize + 1
         
         return len(self.embedding_indices_list) * len_i * len_j
 
     def __getitem__(self, idx):
         len_list, len_i, len_j = len(self.embedding_indices_list), self.embedding_indices_list[0].shape[0], self.embedding_indices_list[0].shape[1]
 
+        if self.args.cut_edge_embedding : 
+            len_i = len_i - self.args.patchsize + 1
+            len_j = len_j - self.args.patchsize + 1
+        
         idx, j_idx = idx // len_j, idx % len_j
         list_idx, i_idx = idx // len_i, idx % len_i
+        
+        if self.args.cut_edge_embedding : 
+            i_idx = i_idx + (self.args.patchsize - 1) // 2
+            j_idx = j_idx + (self.args.patchsize - 1) // 2
 
         embedding_indices = self.embedding_indices_list[list_idx] # W x H
         
