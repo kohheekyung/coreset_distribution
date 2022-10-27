@@ -1,6 +1,8 @@
 import numpy as np
 from torch import nn
 from torch.nn import functional as F
+import torchvision
+import torch
 
 class DiceLoss(nn.Module):
     def __init__(self):
@@ -14,7 +16,43 @@ class DiceLoss(nn.Module):
         intersection = (inputs * targets).sum()                            
         dice = (2.*intersection + smooth) / (inputs.sum() + targets.sum() + smooth)
         
-        return 1 - dice 
+        return 1 - dice
+
+class ThresLoss(nn.Module):
+    def __init__(self):
+        super(ThresLoss, self).__init__()
+
+    def forward(self, inputs, targets):
+        kernel_size = 51
+        gaussianblur = torchvision.transforms.GaussianBlur(kernel_size, sigma= (kernel_size - 1) / 6)
+        blurred_gts = gaussianblur(targets)
+        
+        # dilate_kernel = torch.ones(size=(1, 1, kernel_size, kernel_size)).cuda()
+        # dilate_targets = torch.clamp(torch.nn.functional.conv2d(targets, dilate_kernel, padding=(kernel_size // 2, kernel_size // 2)), 0, 1)
+        
+        inputs = inputs.view(-1)
+        targets = targets.view(-1)
+        blurred_targets = blurred_gts.view(-1)
+        
+        gt_0_index = torch.nonzero(1 - targets)
+        gt_1_index = torch.nonzero(targets)        
+        
+        gt_0_max = torch.max(inputs[gt_0_index])
+        gt_0_min = torch.min(inputs[gt_0_index])
+        gt_1_max = torch.max(inputs[gt_1_index])
+        gt_1_min = torch.min(inputs[gt_1_index])
+        
+        thres_mask = (inputs > gt_1_min) * (inputs < gt_0_max)
+        thres_index = torch.nonzero(thres_mask * blurred_targets)
+        
+        final_targets = (gt_1_max - gt_0_min) * blurred_targets + gt_0_min
+        
+        final_targets = final_targets[thres_index]
+        thres_inputs = inputs[thres_index]
+        
+        thresloss = torch.sqrt(torch.mean(torch.square(thres_inputs - final_targets)))
+        
+        return thresloss, blurred_gts
 
 def cal_pro_metric_new(labeled_imgs, score_imgs, fpr_thresh=0.3, max_steps=2000, class_name=None):
     #labeled_imgs = np.array(labeled_imgs).squeeze(1)

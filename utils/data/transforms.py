@@ -77,7 +77,10 @@ def cutpaste(imagesize, area_ratio, aspect_ratio, maxcut, transform=None, rotati
                 mask = patch.split()[-1]
 
             # new location
-            aug_image[:, paste_left : paste_left + patch.shape[1], paste_top : paste_top + patch.shape[2]] = torch.mean(patch)
+            if random.random() < 0.5 :
+                aug_image[:, paste_left : paste_left + patch.shape[1], paste_top : paste_top + patch.shape[2]] = torch.mean(patch)
+            else : 
+                aug_image[:, paste_left : paste_left + patch.shape[1], paste_top : paste_top + patch.shape[2]] = patch
             aug_gt[:, paste_left : paste_left + patch.shape[1], paste_top : paste_top + patch.shape[2]] = 1
         
         return aug_image, aug_gt
