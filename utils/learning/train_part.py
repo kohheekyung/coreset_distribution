@@ -59,8 +59,7 @@ def copy_files(src, dst, ignores=[]):
 
 def prep_dirs(root, args):
     # make embeddings dir
-    # embeddings_path = os.path.join(root, 'embeddings')
-    embeddings_path = os.path.join('./', f'embeddings_{"+".join(args.layer_index)}', args.category)
+    embeddings_path = args.embedding_dir_path
     os.makedirs(embeddings_path, exist_ok=True)
     # make sample dir
     sample_path = os.path.join(root, 'sample')
@@ -111,12 +110,20 @@ class Coreset(pl.LightningModule):
         for handle in self.backbone.hook_handles:
             handle.remove()
         self.outputs = {}
-            
         for extract_layer in args.layer_index :
             forward_hook = ForwardHook(
                 self.outputs, extract_layer, args.layer_index[-1]
             )
-            network_layer = self.backbone.__dict__["_modules"][extract_layer]
+            if "." in extract_layer:
+                extract_block, extract_idx = extract_layer.split(".")
+                network_layer = self.backbone.__dict__["_modules"][extract_block]
+                if extract_idx.isnumeric():
+                    extract_idx = int(extract_idx)
+                    network_layer = network_layer[extract_idx]
+                else:
+                    network_layer = network_layer.__dict__["_modules"][extract_idx]
+            else:
+                network_layer = self.backbone.__dict__["_modules"][extract_layer]
             
             if isinstance(network_layer, torch.nn.Sequential):
                 self.backbone.hook_handles.append(
@@ -126,6 +133,8 @@ class Coreset(pl.LightningModule):
                 self.backbone.hook_handles.append(
                     network_layer.register_forward_hook(forward_hook)
                 )
+                
+            self.embedding_dir_path = args.embedding_dir_path
 
     def forward(self, images):
         self.outputs.clear()
@@ -140,8 +149,6 @@ class Coreset(pl.LightningModule):
 
     def on_train_start(self):
         self.backbone.eval()
-        self.embedding_dir_path = os.path.join('./', f'embeddings_{"+".join(self.args.layer_index)}', self.args.category)
-        os.makedirs(self.embedding_dir_path, exist_ok=True)
         self.embedding_list = []
         self.embedding_pe_list = []
 
@@ -255,14 +262,14 @@ class Distribution(pl.LightningModule):
 
         self.args = args
         self.model = Distribution_Model(args, dist_input_size, dist_output_size)
-        self.embedding_dir_path = os.path.join('./', f'embeddings_{"+".join(self.args.layer_index)}', self.args.category)
-        os.makedirs(self.embedding_dir_path, exist_ok=True)
         self.best_val_loss=1e+6
         
         self.train_loss = 0.0
         self.train_size = 0
         self.val_loss = 0.0
         self.val_size = 0
+        
+        self.embedding_dir_path = args.embedding_dir_path
 
     def forward(self, x):
         return self.model(x)
@@ -331,8 +338,6 @@ class Refine(pl.LightningModule):
         self.args = args
         self.amap_threshold = init_threshold
         self.model = Refine_Model(in_chans = args.refine_model_in_chans, out_chans = 1)
-        self.embedding_dir_path = os.path.join('./', f'embeddings_{"+".join(self.args.layer_index)}', self.args.category)
-        os.makedirs(self.embedding_dir_path, exist_ok=True)
         self.best_val_loss=1e+6
         
         self.train_loss = 0.0
@@ -342,6 +347,8 @@ class Refine(pl.LightningModule):
         
         self.refine_model_in_chans = args.refine_model_in_chans
         self.inv_normalize = INV_Normalize()
+        
+        self.embedding_dir_path = args.embedding_dir_path
         
     def save_anomaly_map(self, anomaly_map, input_img, gt_img, file_name, x_type, save_name, norm=True, thres = -1):
         if anomaly_map.shape != input_img.shape:
@@ -475,8 +482,6 @@ class Coor_Distribution():
     def __init__(self, args, coor_dist_input_size, coor_dist_output_size):
         super(Coor_Distribution, self).__init__()
         self.args = args
-        self.embedding_dir_path = os.path.join('./', f'embeddings_{"+".join(self.args.layer_index)}', self.args.category)
-        os.makedirs(self.embedding_dir_path, exist_ok=True)
         
         self.coor_dist_input_size = coor_dist_input_size
         self.coor_dist_output_size = coor_dist_output_size
@@ -486,6 +491,8 @@ class Coor_Distribution():
         else :
             self.coor_model_save_path = os.path.join(self.embedding_dir_path, f'coor_model_sp{int(self.args.subsampling_percentage*100)}.npy')
         self.dist_padding = args.dist_padding
+        
+        self.embedding_dir_path = args.embedding_dir_path
         
     def fit(self, train_dataloader) :
         for iter, batch in enumerate(train_dataloader):
@@ -528,7 +535,16 @@ class AC_Model(pl.LightningModule):
             forward_hook = ForwardHook(
                 self.outputs, extract_layer, args.layer_index[-1]
             )
-            network_layer = self.backbone.__dict__["_modules"][extract_layer]
+            if "." in extract_layer:
+                extract_block, extract_idx = extract_layer.split(".")
+                network_layer = self.backbone.__dict__["_modules"][extract_block]
+                if extract_idx.isnumeric():
+                    extract_idx = int(extract_idx)
+                    network_layer = network_layer[extract_idx]
+                else:
+                    network_layer = network_layer.__dict__["_modules"][extract_idx]
+            else:
+                network_layer = self.backbone.__dict__["_modules"][extract_layer]
             
             if isinstance(network_layer, torch.nn.Sequential):
                 self.backbone.hook_handles.append(
@@ -542,7 +558,7 @@ class AC_Model(pl.LightningModule):
         self.init_results_list()
 
         self.inv_normalize = INV_Normalize()
-        self.embedding_dir_path = os.path.join('./', f'embeddings_{"+".join(self.args.layer_index)}', self.args.category)
+        self.embedding_dir_path = args.embedding_dir_path
         
         self.dist_model = Distribution_Model(args, dist_input_size, dist_output_size)
         if self.args.position_encoding_in_distribution :
@@ -599,6 +615,15 @@ class AC_Model(pl.LightningModule):
     def save_anomaly_map(self, anomaly_map, input_img, gt_img, file_name, x_type, save_name, norm=True, thres = -1):
         if anomaly_map.shape != input_img.shape:
             anomaly_map = cv2.resize(anomaly_map, (input_img.shape[0], input_img.shape[1]))
+            
+        # save as pickle 
+        with open(os.path.join(self.sample_path, f'{x_type}_{file_name}.pkl'), 'wb') as fp:
+            pickle.dump(input_img, fp)
+        with open(os.path.join(self.sample_path, f'{x_type}_{file_name}_gt.pkl'), 'wb') as fp:
+            pickle.dump(gt_img, fp)
+        with open(os.path.join(self.sample_path, f'{x_type}_{file_name}_{save_name}.pkl'), 'wb') as fp:
+            pickle.dump(anomaly_map, fp)
+        
         if norm == True :
             anomaly_map = anomaly_map.clip(min=0)
             anomaly_map = min_max_norm(anomaly_map, thres)
@@ -612,7 +637,7 @@ class AC_Model(pl.LightningModule):
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}.jpg'), input_img)
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_{save_name}.jpg'), anomaly_map_norm_hm)
         cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_{save_name}_on_img.jpg'), hm_on_img)
-        cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_gt.jpg'), gt_img)
+        cv2.imwrite(os.path.join(self.sample_path, f'{x_type}_{file_name}_gt.jpg'), gt_img * 255)
         
     def save_syn_dataset(self, root_dir, anomaly_map, input_img, gt_img, file_name, x_type):
         pickle_path = os.path.join(root_dir, f'{x_type}_{file_name}_img.pkl')        
@@ -626,7 +651,19 @@ class AC_Model(pl.LightningModule):
         pickle_path = os.path.join(root_dir, f'{x_type}_{file_name}_amap.pkl')        
         with open(pickle_path, 'wb') as fp:
             pickle.dump(anomaly_map, fp)
-
+            
+    # def calc_anomaly_pxl(self, dist_matrix, anomaly_nn = 1, epsilon=1e-6) :
+    #     '''
+    #     dist_matrix : 2D matrix with thresholding (size : (H x W) x faiss.ntotal)
+    #     '''
+    #     dist_matrix_sorted = -np.sort(-dist_matrix, axis = 1)
+    #     dist_matrix_sorted = -np.log(dist_matrix_sorted + epsilon)
+    
+    #     weights_from_code = 1 - np.exp(dist_matrix_sorted[:,0]) / np.sum(np.exp(dist_matrix_sorted[:, :anomaly_nn]), axis = 1)
+        
+    #     anomaly_pxl = weights_from_code * dist_matrix_sorted[:, 0]
+    #     return anomaly_pxl
+                                                                
     def configure_optimizers(self):
         return None
     
@@ -833,15 +870,20 @@ class AC_Model(pl.LightningModule):
         softmax_coor_thres_inverse[:, -1] = True
         del softmax_coor_thres
         
-        # anomaly_pxl_nb = np.max(dist_prob * softmax_nb_thres_inverse, axis = 1)
+        # anomaly_pxl_nb = self.calc_anomaly_pxl(embed_prob * softmax_nb_thres_inverse, self.args.anomaly_nn)
+        # anomaly_pxl_coor = self.calc_anomaly_pxl(embed_prob * softmax_coor_thres_inverse, self.args.anomaly_nn)
+        # anomaly_pxl_nb_coor = self.calc_anomaly_pxl(embed_prob * (softmax_nb_thres_inverse * softmax_coor_thres_inverse), self.args.anomaly_nn)
+        
+        weights_from_code = 1 - np.exp(embed_distances[:, 0]) / np.sum(np.exp(embed_distances[:, :self.args.anomaly_nn]))
+        
         anomaly_pxl_nb = np.max(embed_prob * softmax_nb_thres_inverse, axis = 1)
-        anomaly_pxl_nb = -np.log(anomaly_pxl_nb)
+        anomaly_pxl_nb = -np.log(anomaly_pxl_nb) * weights_from_code
         
         anomaly_pxl_coor = np.max(embed_prob * softmax_coor_thres_inverse, axis = 1)
-        anomaly_pxl_coor = -np.log(anomaly_pxl_coor)
+        anomaly_pxl_coor = -np.log(anomaly_pxl_coor) * weights_from_code
         
         anomaly_pxl_nb_coor = np.max(embed_prob * (softmax_nb_thres_inverse * softmax_coor_thres_inverse), axis = 1)
-        anomaly_pxl_nb_coor = -np.log(anomaly_pxl_nb_coor)
+        anomaly_pxl_nb_coor = -np.log(anomaly_pxl_nb_coor) * weights_from_code
         
         patch_padding = (self.args.patchsize - 1) // 2
         pad_width = ((patch_padding,),(patch_padding,))
@@ -887,7 +929,7 @@ class AC_Model(pl.LightningModule):
             gt_np = gt.cpu().numpy()[0,0].astype(int)
             input_x = cv2.cvtColor(x.permute(0,2,3,1).cpu().numpy()[0]*255, cv2.COLOR_BGR2RGB)
             thres = -1
-            self.save_anomaly_map(anomaly_map_nb_coor_resized_blur, input_x, gt_np*255, file_name[0], x_type[0], "amap_nb_coor", True, thres)
+            self.save_anomaly_map(anomaly_map_nb_coor_resized_blur, input_x, gt_np, file_name[0], x_type[0], "amap_nb_coor", True, thres)
             return
         
         gt_np = gt.cpu().numpy()[0,0].astype(int)
@@ -927,13 +969,13 @@ class AC_Model(pl.LightningModule):
         x = self.inv_normalize(x).clip(0,1)
         input_x = cv2.cvtColor(x.permute(0,2,3,1).cpu().numpy()[0]*255, cv2.COLOR_BGR2RGB)
         thres = -1
-        self.save_anomaly_map(anomaly_map_nb_resized_blur, input_x, gt_np*255, file_name[0], x_type[0], "amap_nb", True, thres)
-        self.save_anomaly_map(anomaly_map_coor_resized_blur, input_x, gt_np*255, file_name[0], x_type[0], "amap_coor", True, thres)
-        self.save_anomaly_map(anomaly_map_patchcore_resized_blur, input_x, gt_np*255, file_name[0], x_type[0], "amap_patchcore", True, thres)
-        self.save_anomaly_map(anomaly_map_pe_resized_blur, input_x, gt_np*255, file_name[0], x_type[0], "amap_pe", True, thres)
-        self.save_anomaly_map(anomaly_map_nb_coor_resized_blur, input_x, gt_np*255, file_name[0], x_type[0], "amap_nb_coor", True, thres)
+        self.save_anomaly_map(anomaly_map_nb_resized_blur, input_x, gt_np, file_name[0], x_type[0], "amap_nb", True, thres)
+        self.save_anomaly_map(anomaly_map_coor_resized_blur, input_x, gt_np, file_name[0], x_type[0], "amap_coor", True, thres)
+        self.save_anomaly_map(anomaly_map_patchcore_resized_blur, input_x, gt_np, file_name[0], x_type[0], "amap_patchcore", True, thres)
+        self.save_anomaly_map(anomaly_map_pe_resized_blur, input_x, gt_np, file_name[0], x_type[0], "amap_pe", True, thres)
+        self.save_anomaly_map(anomaly_map_nb_coor_resized_blur, input_x, gt_np, file_name[0], x_type[0], "amap_nb_coor", True, thres)
         if self.use_refine:
-            self.save_anomaly_map(anomaly_map_refine, input_x, gt_np*255, file_name[0], x_type[0], "amap_refine", True, thres)
+            self.save_anomaly_map(anomaly_map_refine, input_x, gt_np, file_name[0], x_type[0], "amap_refine", True, thres)
             
     def test_epoch_end(self, outputs):
         if self.generate_syn_dataset :

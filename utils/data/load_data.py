@@ -224,7 +224,16 @@ class Distribution_Dataset_Generator():
             forward_hook = ForwardHook(
                 self.outputs, extract_layer, args.layer_index[-1]
             )
-            network_layer = self.backbone.__dict__["_modules"][extract_layer]
+            if "." in extract_layer:
+                extract_block, extract_idx = extract_layer.split(".")
+                network_layer = self.backbone.__dict__["_modules"][extract_block]
+                if extract_idx.isnumeric():
+                    extract_idx = int(extract_idx)
+                    network_layer = network_layer[extract_idx]
+                else:
+                    network_layer = network_layer.__dict__["_modules"][extract_idx]
+            else:
+                network_layer = self.backbone.__dict__["_modules"][extract_layer]
             
             if isinstance(network_layer, torch.nn.Sequential):
                 self.backbone.hook_handles.append(
@@ -237,6 +246,8 @@ class Distribution_Dataset_Generator():
 
         self.embedding_pad_list = []
         self.embedding_indices_list = []
+        
+        self.embedding_dir_path = args.embedding_dir_path
 
     def forward(self, images):
         self.outputs.clear()
@@ -249,9 +260,7 @@ class Distribution_Dataset_Generator():
                 pass
         return self.outputs
 
-    def generate(self, dataloader):
-        self.embedding_dir_path = os.path.join('./', f'embeddings_{"+".join(self.args.layer_index)}', self.args.category)
-        
+    def generate(self, dataloader):        
         self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}.faiss'))
         if self.args.position_encoding_in_distribution :
             self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'dist_coreset_index_{self.args.dist_coreset_size}_pe.faiss'))
@@ -392,6 +401,8 @@ class Coor_Distribution_Dataset_Generator():
                     network_layer.register_forward_hook(forward_hook)
                 )
         self.embedding_indices_list = []
+        
+        self.embedding_dir_path = args.embedding_dir_path
 
     def forward(self, images):
         self.outputs.clear()
@@ -404,9 +415,7 @@ class Coor_Distribution_Dataset_Generator():
                 pass
         return self.outputs
 
-    def generate(self, dataloader):
-        self.embedding_dir_path = os.path.join('./', f'embeddings_{"+".join(self.args.layer_index)}', self.args.category)
-        
+    def generate(self, dataloader):        
         self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.subsampling_percentage*100)}.faiss'))
         if self.args.position_encoding_in_distribution :
             self.dist_coreset_index = faiss.read_index(os.path.join(self.embedding_dir_path,f'embedding_coreset_index_{int(self.args.subsampling_percentage*100)}_pe.faiss'))

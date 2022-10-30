@@ -23,7 +23,7 @@ def get_args():
     parser.add_argument('--num_workers', default=0) # 0
     
     # patch_core
-    parser.add_argument('--backbone', '-b', choices=['WR101', 'WR50', 'R50', 'R34', 'R18', 'R101', 'R152'], default='WR101') # pretrained model with ImageNet
+    parser.add_argument('--backbone', '-b', choices=['WR101', 'WR50', 'R50', 'R34', 'R18', 'R101', 'R152', 'RNX101', 'DN201'], default='WR101') # pretrained model with ImageNet
     parser.add_argument('--layer_index', '-le', nargs='+', default=['layer2', 'layer3']) # intermediate layers to make local features
     parser.add_argument('--pretrain_embed_dimension', type=int, default=1024) # Dimensionality of features extracted from backbone layers
     parser.add_argument('--target_embed_dimension', type=int, default=1024) # final aggregated PatchCore Dimensionality
@@ -72,11 +72,16 @@ def get_args():
 if __name__ == '__main__':
     args = get_args()
     pl.seed_everything(args.seed)
-    default_root_dir = os.path.join(args.project_root_path, args.category) # ./MVTec/hazelnut
-    args.syn_dataset_dir = args.syn_dataset_path / Path(args.category)
+    default_root_dir = os.path.join(args.project_root_path, args.category, args.backbone) # ./MVTec/hazelnut
+    args.syn_dataset_dir = args.syn_dataset_path / Path(args.category) / Path(args.backbone)
     args.syn_dataset_dir.mkdir(parents=True, exist_ok=True)
-    args.syn_train_dataset_dir = args.syn_train_dataset_path / Path(args.category)
+    args.syn_train_dataset_dir = args.syn_train_dataset_path / Path(args.category) / Path(args.backbone)
     args.syn_train_dataset_dir.mkdir(parents=True, exist_ok=True)
+    
+    args.embedding_dir_path = os.path.join('./', f'embeddings_{"+".join(args.layer_index)}', args.category, args.backbone)
+    os.makedirs(args.embedding_dir_path, exist_ok=True)
+    if args.backbone == 'DN201' :        
+        args.layer_index = [layer_index.replace('layer', 'features.denseblock') for layer_index in args.layer_index]
 
     # generate train dataloader and test dataloader
     train_dataloader, test_dataloader = Train_Dataloader(args), Test_Dataloader(args)

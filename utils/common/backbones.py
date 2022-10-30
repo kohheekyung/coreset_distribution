@@ -15,3 +15,7 @@ def Backbone(backbone_name):
         return torch.hub.load('pytorch/vision:v0.10.0', 'wide_resnet50_2', pretrained=True)
     elif backbone_name == 'WR101' :
         return torch.hub.load('pytorch/vision:v0.10.0', 'wide_resnet101_2', pretrained=True)
+    elif backbone_name == 'RNX101' :
+        return torch.hub.load('pytorch/vision:v0.10.0', 'resnext101_32x8d', pretrained=True)
+    elif backbone_name == 'DN201' :
+        return torch.hub.load('pytorch/vision:v0.10.0', 'densenet201', pretrained=True)
