@@ -390,7 +390,16 @@ class Coor_Distribution_Dataset_Generator():
             forward_hook = ForwardHook(
                 self.outputs, extract_layer, args.layer_index[-1]
             )
-            network_layer = self.backbone.__dict__["_modules"][extract_layer]
+            if "." in extract_layer:
+                extract_block, extract_idx = extract_layer.split(".")
+                network_layer = self.backbone.__dict__["_modules"][extract_block]
+                if extract_idx.isnumeric():
+                    extract_idx = int(extract_idx)
+                    network_layer = network_layer[extract_idx]
+                else:
+                    network_layer = network_layer.__dict__["_modules"][extract_idx]
+            else:
+                network_layer = self.backbone.__dict__["_modules"][extract_layer]
             
             if isinstance(network_layer, torch.nn.Sequential):
                 self.backbone.hook_handles.append(

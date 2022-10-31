@@ -482,7 +482,7 @@ class Coor_Distribution():
     def __init__(self, args, coor_dist_input_size, coor_dist_output_size):
         super(Coor_Distribution, self).__init__()
         self.args = args
-        
+        self.embedding_dir_path = args.embedding_dir_path
         self.coor_dist_input_size = coor_dist_input_size
         self.coor_dist_output_size = coor_dist_output_size
         self.coor_model = np.zeros(shape = (coor_dist_input_size[0], coor_dist_input_size[1], coor_dist_output_size), dtype=np.float32)
@@ -491,8 +491,6 @@ class Coor_Distribution():
         else :
             self.coor_model_save_path = os.path.join(self.embedding_dir_path, f'coor_model_sp{int(self.args.subsampling_percentage*100)}.npy')
         self.dist_padding = args.dist_padding
-        
-        self.embedding_dir_path = args.embedding_dir_path
         
     def fit(self, train_dataloader) :
         for iter, batch in enumerate(train_dataloader):
