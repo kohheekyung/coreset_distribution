@@ -134,3 +134,6 @@ result/*
 *.sh
 *.out
 *.png
+*.zip
+*result
+*embedding
