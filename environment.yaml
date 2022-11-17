@@ -1,4 +1,4 @@
-name: anomalib_env
+name: anomal_env
 channels:
   - defaults
 dependencies:
