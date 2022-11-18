@@ -25,8 +25,8 @@ if __name__ == '__main__':
     category_border = [0, 83, 233, 365, 482, 560, 670, 794, 909, 1076, 1236, 1353, 1395, 1495, 1574, 1725]
     category_list = ['bottle', 'cable', 'capsule', 'carpet', 'grid', 'hazelnut', 'leather', 'metal_nut', 'pill', 'screw', 'tile', 'toothbrush', 'transistor', 'wood', 'zipper']
     if args.is_MVTec_small :
-        category_border = [0, 25, 60, 95]
-        category_list = ['bottle', 'cable', 'capsule']
+        category_border = [0, 25]
+        category_list = ['bottle']
     if args.is_BTAD :
         category_border = [0, 70, 300, 741]
         category_list = ['01', '02', '03']

@@ -84,7 +84,6 @@ if __name__ == '__main__':
     nb_coor_score_list = []
     nb_score_list = []
     patchcore_score_list = []
-    pe_score_list = []
     gt_list = []
     img_list = []
     fname_list = []
@@ -99,26 +98,23 @@ if __name__ == '__main__':
         nb_coor_pkl_list = sorted(glob.glob(os.path.join(default_root_dir, latest_version, "sample", '*amap_nb_coor.pkl')))
         nb_pkl_list = sorted(glob.glob(os.path.join(default_root_dir, latest_version, "sample", '*amap_nb.pkl')))
         patchcore_pkl_list = sorted(glob.glob(os.path.join(default_root_dir, latest_version, "sample", '*amap_patchcore.pkl')))
-        pe_pkl_list = sorted(glob.glob(os.path.join(default_root_dir, latest_version, "sample", '*amap_pe.pkl')))
         gt_pkl_list = sorted(glob.glob(os.path.join(default_root_dir, latest_version, "sample", '*_gt.pkl')))
-        img_pkl_list = sorted(glob.glob(os.path.join(default_root_dir, latest_version, "sample", '*_0???.pkl')))
+        img_pkl_list = sorted(glob.glob(os.path.join(default_root_dir, latest_version, "sample", '*_0???.pkl')) + glob.glob(os.path.join(default_root_dir, latest_version, "sample", '*_0??.pkl')))
         
         coor_score_list.append(get_scores_from_pkl(coor_pkl_list))
         nb_coor_score_list.append(get_scores_from_pkl(nb_coor_pkl_list))
         nb_score_list.append(get_scores_from_pkl(nb_pkl_list))
         patchcore_score_list.append(get_scores_from_pkl(patchcore_pkl_list))
-        pe_score_list.append(get_scores_from_pkl(pe_pkl_list))
 
         if idx == 0 :
             gt_list = get_scores_from_pkl(gt_pkl_list)
             img_list = get_scores_from_pkl(img_pkl_list)
             fname_list = [img_pkl.strip(".pkl") for img_pkl in img_pkl_list]
-    
+            
     coor_score_np = np.array(coor_score_list)   
     nb_coor_score_np = np.array(nb_coor_score_list)
     nb_score_np = np.array(nb_score_list)
     patchcore_score_np = np.array(patchcore_score_list)
-    pe_score_np = np.array(pe_score_list)
     gt_np = np.array(gt_list)
     img_np = np.array(img_list)
     img_gt_np = np.array([pxl_gt.sum() > 0 for pxl_gt in gt_np])
@@ -127,13 +123,11 @@ if __name__ == '__main__':
     nb_coor_ensemble_pxl_score = get_ensemble_pxl_score(nb_coor_score_np)
     nb_ensemble_pxl_score = get_ensemble_pxl_score(nb_score_np)
     patchcore_ensemble_pxl_score = get_ensemble_pxl_score(patchcore_score_np)
-    pe_ensemble_pxl_score = get_ensemble_pxl_score(pe_score_np)
     
     coor_ensemble_img_score = get_ensemble_img_score(coor_score_np)
     nb_coor_ensemble_img_score = get_ensemble_img_score(nb_coor_score_np)
     nb_ensemble_img_score = get_ensemble_img_score(nb_score_np)
     patchcore_ensemble_img_score = get_ensemble_img_score(patchcore_score_np)
-    pe_ensemble_img_score = get_ensemble_img_score(pe_score_np)
     
     # Total pixel-level auc-roc score
     pixel_auc_nb = roc_auc_score(gt_np.ravel(), nb_ensemble_pxl_score.ravel())
@@ -141,8 +135,6 @@ if __name__ == '__main__':
     pixel_auc_coor = roc_auc_score(gt_np.ravel(), coor_ensemble_pxl_score.ravel())
     # Total pixel-level auc-roc score for patchcore version
     pixel_auc_patchcore = roc_auc_score(gt_np.ravel(), patchcore_ensemble_pxl_score.ravel())
-    # Total pixel-level auc-roc score for using position encoding
-    pixel_auc_pe = roc_auc_score(gt_np.ravel(), pe_ensemble_pxl_score.ravel())
     # Total pixel-level auc-roc score
     pixel_auc_nb_coor = roc_auc_score(gt_np.ravel(), nb_coor_ensemble_pxl_score.ravel())
     
@@ -152,15 +144,13 @@ if __name__ == '__main__':
     img_auc_coor = roc_auc_score(img_gt_np, coor_ensemble_img_score)
     # Total image-level auc-roc score for patchcore version
     img_auc_patchcore = roc_auc_score(img_gt_np, patchcore_ensemble_img_score)
-    # Total image-level auc-roc score for using position encoding
-    img_auc_pe = roc_auc_score(img_gt_np, pe_ensemble_img_score)
     # Total image-level auc-roc score
     img_auc_nb_coor = roc_auc_score(img_gt_np, nb_coor_ensemble_img_score)
     
     f = open(os.path.join(args.project_root_path, "ensemble_score_result.csv"), "a")
     data = [args.category, \
-            str(f'{pixel_auc_nb : .6f}'), str(f'{pixel_auc_coor : .6f}'), str(f'{pixel_auc_patchcore : .6f}'), str(f'{pixel_auc_pe : .6f}'), str(f'{pixel_auc_nb_coor : .6f}'),\
-            str(f'{img_auc_nb : .6f}'), str(f'{img_auc_coor : .6f}'), str(f'{img_auc_patchcore : .6f}'), str(f'{img_auc_pe : .6f}'), str(f'{img_auc_nb_coor : .6f}')]
+            str(f'{pixel_auc_nb : .6f}'), str(f'{pixel_auc_coor : .6f}'), str(f'{pixel_auc_patchcore : .6f}'), str(f'{pixel_auc_nb_coor : .6f}'),\
+            str(f'{img_auc_nb : .6f}'), str(f'{img_auc_coor : .6f}'), str(f'{img_auc_patchcore : .6f}'), str(f'{img_auc_nb_coor : .6f}')]
     data = ','.join(data) + '\n'
     f.write(data)
     f.close()

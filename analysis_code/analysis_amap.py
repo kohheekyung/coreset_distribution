@@ -38,12 +38,6 @@ def get_ensemble_img_score(score_np, anomaly_percentage = 0.001) :
     backbone_num, img_num, H, W = score_np.shape
     scores_ravel = score_np.reshape(backbone_num * img_num, -1)
     
-    # mean_num = (int)(H * W * anomaly_percentage)
-    
-    # scores_ravel_sorted = -np.sort(-scores_ravel, axis = 1)
-    # img_score = np.mean(scores_ravel_sorted[:, :mean_num], axis = 1).reshape(backbone_num, img_num)
-    # img_score = np.mean(img_score, axis = 0)
-    
     max_scores = scores_ravel.max(axis=1).reshape(backbone_num, img_num)
     img_score = np.mean(max_scores, axis = 0)
     
@@ -211,8 +205,8 @@ if __name__ == '__main__':
     category_border = [0, 83, 233, 365, 482, 560, 670, 794, 909, 1076, 1236, 1353, 1395, 1495, 1574, 1725]
     category_list = ['bottle', 'cable', 'capsule', 'carpet', 'grid', 'hazelnut', 'leather', 'metal_nut', 'pill', 'screw', 'tile', 'toothbrush', 'transistor', 'wood', 'zipper']
     if args.is_MVTec_small :
-        category_border = [0, 25, 60, 95]
-        category_list = ['bottle', 'cable', 'capsule']
+        category_border = [0, 25]
+        category_list = ['bottle']
     if args.is_BTAD :
         category_border = [0, 70, 300, 741]
         category_list = ['01', '02', '03']
