@@ -326,7 +326,13 @@ if __name__ == '__main__':
         
         max_list.append(np.max(ensemble_pxl_score))
         
-        f = open(os.path.join(args.project_root_path, f"score_result_{args.max_steps}.csv"), "a")
+        print("Image AUROC: ", f'{category_img_auc : .6f}')
+        print("Pixel AUROC: ", f'{category_pxl_auc : .6f}')
+        if args.calc_pro :
+            print("Pixel AUPRO: ", f'{category_pxl_pro : .6f}')
+        print("")
+        
+        f = open(os.path.join(args.project_root_path, f"score_result.csv"), "a")
         data = [category_list[idx], str(f'{category_img_auc : .6f}'), str(f'{category_pxl_auc : .6f}'), str(f'{best_threshold : .6f}')]
         if args.calc_pro :
             data.append(str(f'{category_pxl_pro : .6f}'))
@@ -339,7 +345,7 @@ if __name__ == '__main__':
     if args.calc_pro :
         avg_pxl_pro = np.mean(pxl_pro_score_list)
     
-    f = open(os.path.join(args.project_root_path, f"score_result_{args.max_steps}.csv"), "a")
+    f = open(os.path.join(args.project_root_path, f"score_result.csv"), "a")
     data = ["Avg", str(f'{avg_img_auc : .6f}'), str(f'{avg_pxl_auc : .6f}')]
     if args.calc_pro :
         data.append(str(f'{avg_pxl_pro : .6f}'))
