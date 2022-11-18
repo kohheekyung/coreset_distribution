@@ -13,13 +13,14 @@ from tqdm import tqdm
 
 def get_args():
     parser = argparse.ArgumentParser(description='ANOMALYLOCALIZATION')
-    parser.add_argument('--project_root_path', default=r'../result/refine_result/ensemble_refine_ravel')
+    parser.add_argument('--project_root_path', default=r'../result/ensemble_ravel')
     parser.add_argument('--calc_pro', default=False, action='store_true', help="Whether to calcutate pro score, which is time consuming")
     parser.add_argument('--compare_with_patchcore', default=False, action='store_true', help="Whether to compare score with patchcore")
     parser.add_argument('--visualize', default=False, action='store_true', help="Whether to visualize anomaly map image")
     parser.add_argument('--max_steps', type=int, default=2000)
     parser.add_argument('--calc_misclassified_sample', default=False, action='store_true', help="Whether to calculate misclassified sample")
     parser.add_argument('--is_BTAD', default = False, action="store_true", help="Whether to use BTAD dataset")
+    parser.add_argument('--is_MVTec_small', default = False, action="store_true", help="Whether to use MVTec_small dataset")
 
     args = parser.parse_args()
     return args
@@ -209,6 +210,9 @@ if __name__ == '__main__':
     
     category_border = [0, 83, 233, 365, 482, 560, 670, 794, 909, 1076, 1236, 1353, 1395, 1495, 1574, 1725]
     category_list = ['bottle', 'cable', 'capsule', 'carpet', 'grid', 'hazelnut', 'leather', 'metal_nut', 'pill', 'screw', 'tile', 'toothbrush', 'transistor', 'wood', 'zipper']
+    if args.is_MVTec_small :
+        category_border = [0, 25, 60, 95]
+        category_list = ['bottle', 'cable', 'capsule']
     if args.is_BTAD :
         category_border = [0, 70, 300, 741]
         category_list = ['01', '02', '03']

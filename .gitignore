@@ -131,7 +131,6 @@ dmypy.json
 # Result directory
 embeddings*
 result/*
-*.sh
 *.out
 *.png
 *.zip

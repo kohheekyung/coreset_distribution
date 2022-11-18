@@ -13,6 +13,7 @@ def get_args():
     parser.add_argument('--before_result_root_dir', default=r'../result/ensemble_result')
     parser.add_argument('--after_result_root_dir', default=r'../result/ensemble_ravel')
     parser.add_argument('--is_BTAD', default = False, action="store_true", help="Whether to use BTAD dataset")
+    parser.add_argument('--is_MVTec_small', default = False, action="store_true", help="Whether to use MVTec_small dataset")
     args = parser.parse_args()
     return args
 
@@ -23,7 +24,9 @@ if __name__ == '__main__':
 
     category_border = [0, 83, 233, 365, 482, 560, 670, 794, 909, 1076, 1236, 1353, 1395, 1495, 1574, 1725]
     category_list = ['bottle', 'cable', 'capsule', 'carpet', 'grid', 'hazelnut', 'leather', 'metal_nut', 'pill', 'screw', 'tile', 'toothbrush', 'transistor', 'wood', 'zipper']
-    
+    if args.is_MVTec_small :
+        category_border = [0, 25, 60, 95]
+        category_list = ['bottle', 'cable', 'capsule']
     if args.is_BTAD :
         category_border = [0, 70, 300, 741]
         category_list = ['01', '02', '03']

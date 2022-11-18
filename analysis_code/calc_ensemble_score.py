@@ -11,8 +11,8 @@ import cv2
 def get_args():
     parser = argparse.ArgumentParser(description='ANOMALYLOCALIZATION')
     parser.add_argument('--category', default='hazelnut')
-    parser.add_argument('--project_root_path', default=r'./result')
-    parser.add_argument('--ensemble_root_path', default=r'./ensemble_result')
+    parser.add_argument('--project_root_path', default=r'../result')
+    parser.add_argument('--ensemble_root_path', default=r'../result/ensemble_result')
     
     # patch_core
     parser.add_argument('--backbone_list', '-b', nargs='+', default=['WR101', 'RNX101', 'DN201']) # pretrained model with ImageNet
