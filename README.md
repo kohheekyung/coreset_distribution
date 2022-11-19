@@ -21,7 +21,7 @@ We provided a bash file for training and evaluating the anomaly map for this sma
 First, export the conda environment from "environment.yaml", and activate the environment. The default environment name is "anomal_lib". We used conda=22.9.0 by default.
 ```bash
 conda env create -f requirements.txt
-conda activate anomal_lib
+conda activate anomaly_lib
 ```
 
 Then, execute "evaluate_anomaly_map_on_MVTec_small.sh". This bash file contains all processes of training the model, evaluating the anomaly map, and visualizing the anomaly map.
