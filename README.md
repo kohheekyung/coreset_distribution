@@ -19,7 +19,7 @@ In this supplementary material, we provide a small version of the MVTec AD bench
 We provided a bash file for training and evaluating the anomaly map for this small dataset, called MVTec_small.
 
 First, go to "anomaly_map_with_position_and_neighborhood_information" code repository, and install all requirements of environment.
-The environment name I used is "anomaly_env".
+The environment name we used is "anomaly_env".
 
 ```bash
 cd anomaly_map_with_position_and_neighborhood_information
