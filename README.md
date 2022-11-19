@@ -18,24 +18,28 @@ We used *pytorch-lightning* to manage the training process and evaluation proces
 In this supplementary material, we provide a small version of the MVTec AD benchmark, which contains only one category, a bottle with 30 training images and 25 test images. Among the test image, 10 are normal samples and 15 are anomal samples.
 We provided a bash file for training and evaluating the anomaly map for this small dataset, called MVTec_small.
 
-First, install all requirements of environment.
+First, go to "anomaly_map_with_position_and_neighborhood_information" code repository, and install all requirements of environment.
 The environment name I used is "anomaly_env".
-The version of torch and torchvision might be different depending on hardware settings.
+
 ```bash
-conda create -n anomaly_env
+cd anomaly_map_with_position_and_neighborhood_information
+conda create -y -n anomaly_env
 conda activate anomaly_env 
 ```
 ```bash
 conda install -y python=3.8
 pip install pytorch-lightning==1.5.9
 pip install pillow==9.0.0
-pip install torch==1.12.1+cu116 torchvision==0.13.1+cu116 -f https://download.pytorch.org/whl/torch_stable.html
 pip install faiss-gpu==1.7.1
 pip install opencv-python==4.5.2.52
 pip install scikit-learn==0.24.2
 pip install scikit-image==0.19.2
 pip install pymp-pypi==0.5.0
 pip install numpngw==0.1.2
+```
+The available version of torch and torchvision might be different depending on hardware settings.
+```bash
+pip install torch==1.12.1+cu116 torchvision==0.13.1+cu116 -f https://download.pytorch.org/whl/torch_stable.html
 ```
 
 Then, execute "evaluate_anomaly_map_on_MVTec_small.sh". This bash file contains all processes of training the model, evaluating the anomaly map, and visualizing the anomaly map.
