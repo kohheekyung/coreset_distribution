@@ -33,7 +33,9 @@ pip install torch==1.12.1+cu116 torchvision==0.13.1+cu116 -f https://download.py
 pip install faiss-gpu==1.7.1
 pip install opencv-python==4.5.2.52
 pip install scikit-learn==0.24.2
+pip install scikit-image==0.19.2
 pip install pymp-pypi==0.5.0
+pip install numpngw==0.1.2
 ```
 
 Then, execute "evaluate_anomaly_map_on_MVTec_small.sh". This bash file contains all processes of training the model, evaluating the anomaly map, and visualizing the anomaly map.
