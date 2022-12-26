@@ -440,7 +440,7 @@ if __name__ == '__main__':
                 heatmap_on_img_with_patchcore_mask = heatmap_on_image_with_prediced_mask(patchcore_heatmap_on_img, patchcore_amap, patchcore_threshold, kernel_size=(4,4))
             
             cv2.imwrite(img_path, img)
-            cv2.imwrite(gt_path, (1 - gt) * 255)
+            cv2.imwrite(gt_path, gt * 255)
             cv2.imwrite(amap_path, heatmap)
             cv2.imwrite(amap_on_img_path, heatmap_on_img)
             cv2.imwrite(img_with_gt_path, img_with_gt)
