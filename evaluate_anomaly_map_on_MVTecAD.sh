@@ -4,10 +4,38 @@
 # If you want other pretrained network rather than WideResNet101-2, change "--backbone" argument.
 
 python train_coreset_distribution.py --category bottle --train_coreset --train_nb_dist --train_coor_dist --dataset_path ../dataset/MVTecAD
+python train_coreset_distribution.py --category cable --train_coreset --train_nb_dist --train_coor_dist --dataset_path ../dataset/MVTecAD
+python train_coreset_distribution.py --category capsule --train_coreset --train_nb_dist --train_coor_dist --dataset_path ../dataset/MVTecAD
+python train_coreset_distribution.py --category carpet --train_coreset --train_nb_dist --train_coor_dist --dataset_path ../dataset/MVTecAD
+python train_coreset_distribution.py --category grid --train_coreset --train_nb_dist --train_coor_dist --dataset_path ../dataset/MVTecAD
+python train_coreset_distribution.py --category hazelnut --train_coreset --train_nb_dist --train_coor_dist --dataset_path ../dataset/MVTecAD
+python train_coreset_distribution.py --category leather --train_coreset --train_nb_dist --train_coor_dist --dataset_path ../dataset/MVTecAD
+python train_coreset_distribution.py --category metal_nut --train_coreset --train_nb_dist --train_coor_dist --dataset_path ../dataset/MVTecAD
+python train_coreset_distribution.py --category pill --train_coreset --train_nb_dist --train_coor_dist --dataset_path ../dataset/MVTecAD
+python train_coreset_distribution.py --category screw --train_coreset --train_nb_dist --train_coor_dist --dataset_path ../dataset/MVTecAD
+python train_coreset_distribution.py --category tile --train_coreset --train_nb_dist --train_coor_dist --dataset_path ../dataset/MVTecAD
+python train_coreset_distribution.py --category toothbrush --train_coreset --train_nb_dist --train_coor_dist --dataset_path ../dataset/MVTecAD
+python train_coreset_distribution.py --category transistor --train_coreset --train_nb_dist --train_coor_dist --dataset_path ../dataset/MVTecAD
+python train_coreset_distribution.py --category wood --train_coreset --train_nb_dist --train_coor_dist --dataset_path ../dataset/MVTecAD
+python train_coreset_distribution.py --category zipper --train_coreset --train_nb_dist --train_coor_dist --dataset_path ../dataset/MVTecAD
 
 # make ensemble score for each category and save the result in "./result/ensemble_result" repository.
 #"--backbone_list" argument is list of pretrained networks which are to ensemble. You can change category with "--category" path. 
 python analysis_code/calc_ensemble_score.py --category bottle --backbone_list WR101 --project_root_path ./result --ensemble_root_path ./result/ensemble_result
+python analysis_code/calc_ensemble_score.py --category cable --backbone_list WR101 --project_root_path ./result --ensemble_root_path ./result/ensemble_result
+python analysis_code/calc_ensemble_score.py --category capsule --backbone_list WR101 --project_root_path ./result --ensemble_root_path ./result/ensemble_result
+python analysis_code/calc_ensemble_score.py --category carpet --backbone_list WR101 --project_root_path ./result --ensemble_root_path ./result/ensemble_result
+python analysis_code/calc_ensemble_score.py --category grid --backbone_list WR101 --project_root_path ./result --ensemble_root_path ./result/ensemble_result
+python analysis_code/calc_ensemble_score.py --category hazelnut --backbone_list WR101 --project_root_path ./result --ensemble_root_path ./result/ensemble_result
+python analysis_code/calc_ensemble_score.py --category leather --backbone_list WR101 --project_root_path ./result --ensemble_root_path ./result/ensemble_result
+python analysis_code/calc_ensemble_score.py --category metal_nut --backbone_list WR101 --project_root_path ./result --ensemble_root_path ./result/ensemble_result
+python analysis_code/calc_ensemble_score.py --category pill --backbone_list WR101 --project_root_path ./result --ensemble_root_path ./result/ensemble_result
+python analysis_code/calc_ensemble_score.py --category screw --backbone_list WR101 --project_root_path ./result --ensemble_root_path ./result/ensemble_result
+python analysis_code/calc_ensemble_score.py --category tile --backbone_list WR101 --project_root_path ./result --ensemble_root_path ./result/ensemble_result
+python analysis_code/calc_ensemble_score.py --category toothbrush --backbone_list WR101 --project_root_path ./result --ensemble_root_path ./result/ensemble_result
+python analysis_code/calc_ensemble_score.py --category transistor --backbone_list WR101 --project_root_path ./result --ensemble_root_path ./result/ensemble_result
+python analysis_code/calc_ensemble_score.py --category wood --backbone_list WR101 --project_root_path ./result --ensemble_root_path ./result/ensemble_result
+python analysis_code/calc_ensemble_score.py --category zipper --backbone_list WR101 --project_root_path ./result --ensemble_root_path ./result/ensemble_result
 
 # convert result format and save it into "./result/ensemble_ravel" repository.
 # Add argument "--is_BTAD" if dataset is BTAD, and "--is_MVtec_small" if dataset is small version of MVTec which we provided.
