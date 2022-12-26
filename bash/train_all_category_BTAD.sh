@@ -1,0 +1,1 @@
+python ../train_coreset_distribution.py --cut_edge_embedding --dataset_path ../dataset/BTAD/BTech_Dataset_transformed --project_root_path ./BTAD_result --dataset_category BTAD --category 03

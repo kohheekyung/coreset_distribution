@@ -1,0 +1,15 @@
+python ../train_coreset_distribution.py --train_coreset --train_nb_dist --train_coor_dist --category bottle
+python ../train_coreset_distribution.py --train_coreset --train_nb_dist --train_coor_dist --category cable
+python ../train_coreset_distribution.py --train_coreset --train_nb_dist --train_coor_dist --category capsule
+python ../train_coreset_distribution.py --train_coreset --train_nb_dist --train_coor_dist --category carpet
+python ../train_coreset_distribution.py --train_coreset --train_nb_dist --train_coor_dist --category grid
+python ../train_coreset_distribution.py --train_coreset --train_nb_dist --train_coor_dist --category hazelnut
+python ../train_coreset_distribution.py --train_coreset --train_nb_dist --train_coor_dist --category leather
+python ../train_coreset_distribution.py --train_coreset --train_nb_dist --train_coor_dist --category metal_nut
+python ../train_coreset_distribution.py --train_coreset --train_nb_dist --train_coor_dist --category pill
+python ../train_coreset_distribution.py --train_coreset --train_nb_dist --train_coor_dist --category screw
+python ../train_coreset_distribution.py --train_coreset --train_nb_dist --train_coor_dist --category tile
+python ../train_coreset_distribution.py --train_coreset --train_nb_dist --train_coor_dist --category toothbrush
+python ../train_coreset_distribution.py --train_coreset --train_nb_dist --train_coor_dist --category transistor
+python ../train_coreset_distribution.py --train_coreset --train_nb_dist --train_coor_dist --category wood
+python ../train_coreset_distribution.py --train_coreset --train_nb_dist --train_coor_dist --category zipper

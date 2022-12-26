@@ -1,0 +1,15 @@
+python ../analysis_code/calc_ensemble_score.py --category bottle --ensemble_root_path WR101_result -b WR101
+python ../analysis_code/calc_ensemble_score.py --category cable --ensemble_root_path WR101_result -b WR101
+python ../analysis_code/calc_ensemble_score.py --category capsule --ensemble_root_path WR101_result -b WR101
+python ../analysis_code/calc_ensemble_score.py --category carpet --ensemble_root_path WR101_result -b WR101
+python ../analysis_code/calc_ensemble_score.py --category grid --ensemble_root_path WR101_result -b WR101
+python ../analysis_code/calc_ensemble_score.py --category hazelnut --ensemble_root_path WR101_result -b WR101
+python ../analysis_code/calc_ensemble_score.py --category leather --ensemble_root_path WR101_result -b WR101
+python ../analysis_code/calc_ensemble_score.py --category metal_nut --ensemble_root_path WR101_result -b WR101
+python ../analysis_code/calc_ensemble_score.py --category pill --ensemble_root_path WR101_result -b WR101
+python ../analysis_code/calc_ensemble_score.py --category screw --ensemble_root_path WR101_result -b WR101
+python ../analysis_code/calc_ensemble_score.py --category tile --ensemble_root_path WR101_result -b WR101
+python ../analysis_code/calc_ensemble_score.py --category toothbrush --ensemble_root_path WR101_result -b WR101
+python ../analysis_code/calc_ensemble_score.py --category transistor --ensemble_root_path WR101_result -b WR101
+python ../analysis_code/calc_ensemble_score.py --category wood --ensemble_root_path WR101_result -b WR101
+python ../analysis_code/calc_ensemble_score.py --category zipper --ensemble_root_path WR101_result -b WR101
