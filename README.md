@@ -1,5 +1,5 @@
-# Supplementary Code
-This is supplementary code for the paper "Image Anomaly Detection and Localization with Position and Neighborhood Information", which is Paper ID 4866.
+# Image Anomaly Detection and Localization with Position and Neighborhood Information
+This is supplementary code for the paper "Image Anomaly Detection and Localization with Position and Neighborhood Information."
 It trains the model for evaluating anomaly maps and calculating Image AUROC, Pixel AUROC, and Pixel AUPRO for two datasets, MVTec AD benchmark, and BTAD dataset.
 
 The model trained on designated hyperparameter can achieve up to **99.52%** and **98.91%** AUROC scores in anomaly detection and localization and **94.83%** AUPRO score for MVTec AD benchmark which is the state-of-the-art performance.
@@ -15,14 +15,12 @@ In the code, two kinds of coresets, which are embedding coreset and distribution
 We used *pytorch-lightning* to manage the training process and evaluation process.
 
 ## Quick Guide
-In this supplementary material, we provide a small version of the MVTec AD benchmark, which contains only one category, a bottle with 30 training images and 25 test images. Among the test image, 10 are normal samples and 15 are anomal samples.
-We provided a bash file for training and evaluating the anomaly map for this small dataset, called MVTec_small.
+We provided a bash file for training and evaluating the anomaly map for MVTec AD benchmark and BTAD dataset.
 
-First, go to "anomaly_map_with_position_and_neighborhood_information" code repository, and install all requirements of environment.
+First, go to code repository, and install all requirements of environment.
 The environment name we used is "anomaly_env".
 
 ```bash
-cd anomaly_map_with_position_and_neighborhood_information
 conda create -y -n anomaly_env
 conda activate anomaly_env 
 ```
@@ -42,10 +40,10 @@ The available version of torch and torchvision might be different depending on h
 pip install torch==1.12.1+cu116 torchvision==0.13.1+cu116 -f https://download.pytorch.org/whl/torch_stable.html
 ```
 
-Then, execute "evaluate_anomaly_map_on_MVTec_small.sh". This bash file contains all processes of training the model, evaluating the anomaly map, and visualizing the anomaly map.
+Then, execute "evaluate_anomaly_map_on_MVTecAD.sh". This bash file contains all processes of training the model, evaluating the anomaly map, and visualizing the anomaly map.
 ```bash
-chmod +x evaluate_anomaly_map_on_MVTec_small.sh
-./evaluate_anomaly_map_on_MVTec_small.sh
+chmod +x evaluate_anomaly_map_on_MVTecAD.sh
+./evaluate_anomaly_map_on_MVTecAD.sh
 ```
 As a result of execution, a "result" repository will be created. The structure of the repository is as follows:
 ```
@@ -80,8 +78,8 @@ Visualization of the anomaly map can be found on "./result/ensemble_ravel/viz/" 
 You can check images, ground truth, anomaly map, and anomaly map with a mask on the repository.
 
 ## Hyperparameter setting
-The default hyperparameter in "evaluate_anomaly_map_on_MVTec_small.sh" is the same as mentioned in the paper. 
-"evaluate_anomaly_map_on_MVTec_small.sh" contains 4 sequential python codes.
+The default hyperparameter in "evaluate_anomaly_map_on_MVTecAD.sh" is the same as mentioned in the paper. 
+"evaluate_anomaly_map_on_MVTecAD.sh" contains 4 sequential python codes.
 
 First, **"train_coreset_distribution.py"** trains our proposed model and evaluates the anomaly map for each category. You can change the dataset with "--dataset_category" argument, and the category with "--category" path. 
 Note that the dataset should be in the directory of "--dataset_path" argument. 
