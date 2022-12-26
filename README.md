@@ -1,5 +1,5 @@
 # Image Anomaly Detection and Localization with Position and Neighborhood Information
-This is supplementary code for the paper "Image Anomaly Detection and Localization with Position and Neighborhood Information."
+This is supplementary code for the paper "Image Anomaly Detection and Localization with Position and Neighborhood Information." (https://arxiv.org/abs/2211.12634)
 It trains the model for evaluating anomaly maps and calculating Image AUROC, Pixel AUROC, and Pixel AUPRO for two datasets, MVTec AD benchmark, and BTAD dataset.
 
 The model trained on designated hyperparameter can achieve up to **99.52%** and **98.91%** AUROC scores in anomaly detection and localization and **94.83%** AUPRO score for MVTec AD benchmark which is the state-of-the-art performance.
@@ -16,6 +16,8 @@ We used *pytorch-lightning* to manage the training process and evaluation proces
 
 ## Quick Guide
 We provided a bash file for training and evaluating the anomaly map for MVTec AD benchmark and BTAD dataset.
+Dataset should be placed in parent directory of code repository.
+For example, default dataset directory is "../dataset/MVTecAD" and "../dataset/BTAD" for MVTec AD and BTAD, respectively.
 
 First, go to code repository, and install all requirements of environment.
 The environment name we used is "anomaly_env".
